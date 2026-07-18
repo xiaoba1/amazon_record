@@ -368,22 +368,20 @@ def main():
         sys.exit(1)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    # 同时确保对应年份及12个月的截图目录存在
+    # 仅创建年度截图目录，月份子目录在录入截图时按需创建
     shot_year_dir = f"/workspace/购买记录/截图/{year}"
     os.makedirs(shot_year_dir, exist_ok=True)
-    for m in range(1, 13):
-        os.makedirs(os.path.join(shot_year_dir, f"{m:02d}月"), exist_ok=True)
 
     wb = build_year_workbook(year)
     wb.save(output_file)
 
     print(f"✅ 已生成 {year} 年度表格: {output_file}")
     print(f"   包含 4 个工作表:")
-    print(f"   1. 🛒购买记录明细 - 详细记录(预留1000行，含截图超链接列)")
+    print(f"   1. 🛒购买记录明细 - 详细记录(预留500行，含截图超链接列)")
     print(f"   2. 📊月度统计 - 含柱状图+折线图")
     print(f"   3. 📈年度统计 - 当年总览")
     print(f"   4. 🏪平台分布 - 含饼图+柱状图")
-    print(f"   截图目录: {shot_year_dir}/01月 ~ 12月")
+    print(f"   截图目录: {shot_year_dir}/ (月份子目录按需创建)")
 
 
 if __name__ == "__main__":
