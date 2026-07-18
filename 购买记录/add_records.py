@@ -41,6 +41,32 @@ thin_border = Border(
 ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
+
+def auto_fit_columns(ws, headers, data_start_row=3, data_end_row=502, max_width=50, min_width=8):
+    """自适应列宽：根据表头+数据内容计算每列最大宽度"""
+    from openpyxl.utils import get_column_letter
+    num_cols = len(headers)
+    for col_idx in range(1, num_cols + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = len(str(headers[col_idx - 1] or ""))
+        # 检查数据行
+        for row in range(data_start_row, min(data_end_row + 1, data_start_row + 200)):
+            val = ws.cell(row=row, column=col_idx).value
+            if val is None:
+                continue
+            # 数值类按格式估算宽度
+            if isinstance(val, (int, float)):
+                s = f"¥{val:,.2f}" if col_idx in (7, 9, 10, 11, 12) else str(val)
+            else:
+                s = str(val)
+            # 中文字符按2个宽度计算
+            width = sum(2 if ord(c) > 127 else 1 for c in s)
+            if width > max_len:
+                max_len = width
+        # 加 2 个字符的边距，限制在 [min_width, max_width]
+        final_width = max(min_width, min(max_width, max_len + 2))
+        ws.column_dimensions[col_letter].width = final_width
+
 # 字段顺序（无截图列，增加关联出货单列）
 HEADERS = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "购买订单号", "关联出货单", "备注"]
 NUM_COLS = len(HEADERS)  # 10
@@ -112,18 +138,27 @@ def rewrite_detail_sheet(ws, records, shipment_row_map=None):
     shipment_row_map: {出货单号: 出货记录表行号}，用于建立超链接
     """
     unmerge_all(ws)
-    # 清空数据区
-    for row in range(3, 503):
+    # 清空数据区（含标题行、表头行）
+    for row in range(1, 503):
         for col in range(1, NUM_COLS + 1):
             ws.cell(row=row, column=col).value = None
 
-    # 表头
+    # 第1行：标题（合并单元格）
+    ws.merge_cells(f"A1:{chr(64 + NUM_COLS)}1")
+    title_cell = ws.cell(row=1, column=1, value=f"🛒 购买记录明细表 ({YEAR}年)")
+    title_cell.font = FONT_TITLE
+    title_cell.fill = FILL_TITLE
+    title_cell.alignment = ALIGN_CENTER
+    ws.row_dimensions[1].height = 32
+
+    # 第2行：表头
     for col_idx, h in enumerate(HEADERS, 1):
         cell = ws.cell(row=2, column=col_idx, value=h)
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         cell.alignment = ALIGN_CENTER
         cell.border = thin_border
+    ws.row_dimensions[2].height = 28
 
     # 数据行
     for i, rec in enumerate(records):
@@ -146,7 +181,9 @@ def rewrite_detail_sheet(ws, records, shipment_row_map=None):
                 ship_row = shipment_row_map.get(ship_order)
             ship_cell = ws.cell(row=row, column=9, value=ship_order)
             if ship_row:
-                ship_cell.hyperlink = f"#'📦出货记录'!A{ship_row}"
+                # 工作簿内部跳转：必须用 Hyperlink 对象 + location 属性（target 留空）
+                from openpyxl.worksheet.hyperlink import Hyperlink
+                ship_cell.hyperlink = Hyperlink(ref=f"I{row}", location=f"'📦出货记录'!A{ship_row}", display=ship_order)
                 ship_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
             else:
                 ship_cell.font = FONT_NORMAL
@@ -188,24 +225,38 @@ def rewrite_detail_sheet(ws, records, shipment_row_map=None):
         ws.cell(row=total_row, column=8).border = thin_border
         ws.row_dimensions[total_row].height = 28
 
+    # 自适应列宽
+    auto_fit_columns(ws, HEADERS)
+    ws.freeze_panes = "A3"
+
 
 def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
     """重写出货记录表
     purchase_row_map: {购买订单号: 购买记录表行号}，用于建立超链接
     """
     unmerge_all(ws)
-    # 清空数据区
-    for row in range(3, 503):
+    # 清空数据区（含标题行、表头行）
+    for row in range(1, 503):
         for col in range(1, SHIPMENT_NUM_COLS + 1):
             ws.cell(row=row, column=col).value = None
 
-    # 表头
+    # 第1行：标题（合并单元格）
+    last_col_letter = chr(64 + SHIPMENT_NUM_COLS) if SHIPMENT_NUM_COLS <= 26 else "N"
+    ws.merge_cells(f"A1:{last_col_letter}1")
+    title_cell = ws.cell(row=1, column=1, value=f"📦 出货记录表 ({YEAR}年)")
+    title_cell.font = FONT_TITLE
+    title_cell.fill = FILL_TITLE
+    title_cell.alignment = ALIGN_CENTER
+    ws.row_dimensions[1].height = 32
+
+    # 第2行：表头
     for col_idx, h in enumerate(SHIPMENT_HEADERS, 1):
         cell = ws.cell(row=2, column=col_idx, value=h)
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         cell.alignment = ALIGN_CENTER
         cell.border = thin_border
+    ws.row_dimensions[2].height = 28
 
     # 数据行
     for i, ship in enumerate(shipments):
@@ -233,7 +284,9 @@ def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
             pur_row = purchase_row_map.get(pur_order) if purchase_row_map else None
             pur_cell = ws.cell(row=row, column=14, value=pur_order)
             if pur_row:
-                pur_cell.hyperlink = f"#'🛒购买记录明细'!A{pur_row}"
+                # 工作簿内部跳转：必须用 Hyperlink 对象 + location 属性
+                from openpyxl.worksheet.hyperlink import Hyperlink
+                pur_cell.hyperlink = Hyperlink(ref=f"N{row}", location=f"'🛒购买记录明细'!A{pur_row}", display=pur_order)
                 pur_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
             else:
                 pur_cell.font = FONT_NORMAL
@@ -281,6 +334,10 @@ def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
         ws.cell(row=total_row, column=13).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=13).border = thin_border
         ws.row_dimensions[total_row].height = 28
+
+    # 自适应列宽
+    auto_fit_columns(ws, SHIPMENT_HEADERS)
+    ws.freeze_panes = "A3"
 
 
 def rewrite_month_sheet(ws, records):
