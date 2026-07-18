@@ -107,8 +107,10 @@ def unmerge_all(ws):
         ws.unmerge_cells(str(r))
 
 
-def rewrite_detail_sheet(ws, records):
-    """重写明细表"""
+def rewrite_detail_sheet(ws, records, shipment_row_map=None):
+    """重写明细表
+    shipment_row_map: {出货单号: 出货记录表行号}，用于建立超链接
+    """
     unmerge_all(ws)
     # 清空数据区
     for row in range(3, 503):
@@ -135,14 +137,28 @@ def rewrite_detail_sheet(ws, records):
         ws.cell(row=row, column=6, value=rec["qty"])
         ws.cell(row=row, column=7, value=rec["paid"])
         ws.cell(row=row, column=8, value=rec["order"])
+        # 关联出货单：写入带超链接的文本（点击跳转到出货记录表对应行）
         if rec.get("shipment"):
-            ws.cell(row=row, column=9, value=rec["shipment"])
+            ship_order = str(rec["shipment"])
+            # 在出货记录表中查找该出货单号所在行
+            ship_row = None
+            if shipment_row_map:
+                ship_row = shipment_row_map.get(ship_order)
+            ship_cell = ws.cell(row=row, column=9, value=ship_order)
+            if ship_row:
+                ship_cell.hyperlink = f"#'📦出货记录'!A{ship_row}"
+                ship_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
+            else:
+                ship_cell.font = FONT_NORMAL
+            ship_cell.alignment = ALIGN_CENTER
         if rec.get("remark"):
             ws.cell(row=row, column=10, value=rec["remark"])
 
         for col in range(1, NUM_COLS + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
+            if col == 9 and rec.get("shipment"):
+                continue  # 已单独设置字体
             c.font = FONT_NORMAL
             c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
         ws.cell(row=row, column=7).number_format = "¥#,##0.00"
@@ -173,8 +189,10 @@ def rewrite_detail_sheet(ws, records):
         ws.row_dimensions[total_row].height = 28
 
 
-def rewrite_shipment_sheet(ws, shipments):
-    """重写出货记录表"""
+def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
+    """重写出货记录表
+    purchase_row_map: {购买订单号: 购买记录表行号}，用于建立超链接
+    """
     unmerge_all(ws)
     # 清空数据区
     for row in range(3, 503):
@@ -209,12 +227,23 @@ def rewrite_shipment_sheet(ws, shipments):
         ws.cell(row=row, column=11, value=ship["fee"])
         ws.cell(row=row, column=12, value=ship["revenue"])
         ws.cell(row=row, column=13, value=ship["ship_order"])
+        # 关联购买记录：写入带超链接的文本（点击跳转到购买记录明细表对应行）
         if ship.get("purchase_ref"):
-            ws.cell(row=row, column=14, value=ship["purchase_ref"])
+            pur_order = str(ship["purchase_ref"])
+            pur_row = purchase_row_map.get(pur_order) if purchase_row_map else None
+            pur_cell = ws.cell(row=row, column=14, value=pur_order)
+            if pur_row:
+                pur_cell.hyperlink = f"#'🛒购买记录明细'!A{pur_row}"
+                pur_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
+            else:
+                pur_cell.font = FONT_NORMAL
+            pur_cell.alignment = ALIGN_CENTER
 
         for col in range(1, SHIPMENT_NUM_COLS + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
+            if col == 14 and ship.get("purchase_ref") and purchase_row_map and pur_row:
+                continue  # 已单独设置字体
             c.font = FONT_NORMAL
             c.alignment = ALIGN_CENTER if col in (1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13) else ALIGN_LEFT
         ws.cell(row=row, column=9).number_format = "¥#,##0.00"
@@ -487,8 +516,6 @@ def add_records(new_records, new_shipments=None):
                 existing_shipments.append(ship)
                 print(f"  + 新增出货: {ship['ship_platform']} | {ship['order_date']} | {ship['product']} | ¥{ship['revenue']}")
 
-        rewrite_shipment_sheet(ws_shipment, existing_shipments)
-
     # 反向回填：根据出货记录的 purchase_ref，把对应出货单号写到购买记录的 shipment 字段
     pur_to_ship = {s["purchase_ref"]: s["ship_order"] for s in existing_shipments if s.get("purchase_ref")}
     filled = 0
@@ -499,7 +526,18 @@ def add_records(new_records, new_shipments=None):
     if filled:
         print(f"  ↻ 回填关联出货单: {filled} 条")
 
-    rewrite_detail_sheet(ws_detail, existing)
+    # 构建行号映射（用于超链接互跳）
+    # 购买记录：第3行开始，每条记录占1行 -> {购买订单号: 行号}
+    purchase_row_map = {rec["order"]: 3 + i for i, rec in enumerate(existing)}
+    # 出货记录：第3行开始，每条记录占1行 -> {出货单号: 行号}
+    shipment_row_map = {s["ship_order"]: 3 + i for i, s in enumerate(existing_shipments)}
+
+    # 重写购买记录明细（带出货单超链接）
+    rewrite_detail_sheet(ws_detail, existing, shipment_row_map)
+
+    # 重写出货记录（带购买记录超链接）
+    if "📦出货记录" in wb.sheetnames:
+        rewrite_shipment_sheet(ws_shipment, existing_shipments, purchase_row_map)
 
     rewrite_month_sheet(wb["📊月度统计"], existing)
     rewrite_year_sheet(wb["📈年度统计"], existing)
