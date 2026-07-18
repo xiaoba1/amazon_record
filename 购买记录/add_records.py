@@ -538,6 +538,11 @@ def add_records(new_records, new_shipments=None):
     # 重写出货记录（带购买记录超链接）
     if "📦出货记录" in wb.sheetnames:
         rewrite_shipment_sheet(ws_shipment, existing_shipments, purchase_row_map)
+        # 调整 sheet 顺序：出货记录紧跟在购买记录明细之后
+        desired_idx = wb.sheetnames.index("🛒购买记录明细") + 1
+        cur_idx = wb.sheetnames.index("📦出货记录")
+        if cur_idx != desired_idx:
+            wb.move_sheet("📦出货记录", offset=desired_idx - cur_idx)
 
     rewrite_month_sheet(wb["📊月度统计"], existing)
     rewrite_year_sheet(wb["📈年度统计"], existing)
