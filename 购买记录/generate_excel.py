@@ -62,14 +62,14 @@ def build_year_workbook(year: int):
     ws1 = wb.active
     ws1.title = "🛒购买记录明细"
 
-    ws1.merge_cells("A1:I1")
+    ws1.merge_cells("A1:J1")
     ws1["A1"] = f"🛒 购买记录明细表  ({year}年)"
     ws1["A1"].font = FONT_TITLE
     ws1["A1"].fill = FILL_TITLE
     ws1["A1"].alignment = ALIGN_CENTER
     ws1.row_dimensions[1].height = 32
 
-    headers = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "订单号", "备注"]
+    headers = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "订单号", "截图", "备注"]
     for col_idx, h in enumerate(headers, 1):
         cell = ws1.cell(row=2, column=col_idx, value=h)
         cell.font = FONT_HEADER
@@ -80,18 +80,25 @@ def build_year_workbook(year: int):
 
     set_column_widths(ws1, {
         "A": 8, "B": 12, "C": 22, "D": 32, "E": 22,
-        "F": 8, "G": 14, "H": 24, "I": 20
+        "F": 8, "G": 14, "H": 24, "I": 12, "J": 20
     })
+
+    # 截图超链接单元格的字体（蓝色下划线，模仿超链接样式）
+    FONT_LINK = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
 
     for row in range(DATA_START_ROW, DATA_END_ROW + 1):
         ws1.cell(row=row, column=1, value=f"=IF(C{row}=\"\",\"\",ROW()-2)")
         ws1.cell(row=row, column=7).number_format = "¥#,##0.00"
         ws1.cell(row=row, column=6).number_format = "0"
-        for col in range(1, 10):
+        for col in range(1, 11):
             c = ws1.cell(row=row, column=col)
-            c.font = FONT_NORMAL
             c.border = thin_border
-            c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
+            if col == 9:  # 截图列
+                c.font = FONT_LINK
+                c.alignment = ALIGN_CENTER
+            else:
+                c.font = FONT_NORMAL
+                c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
         ws1.row_dimensions[row].height = 22
 
     TOTAL_ROW = DATA_END_ROW + 2
@@ -105,7 +112,7 @@ def build_year_workbook(year: int):
     ws1.cell(row=TOTAL_ROW, column=7).number_format = "¥#,##0.00"
     ws1.cell(row=TOTAL_ROW, column=7).alignment = ALIGN_CENTER
     ws1.cell(row=TOTAL_ROW, column=7).border = thin_border
-    ws1.merge_cells(f"H{TOTAL_ROW}:I{TOTAL_ROW}")
+    ws1.merge_cells(f"H{TOTAL_ROW}:J{TOTAL_ROW}")
     ws1.cell(row=TOTAL_ROW, column=8, value=f"=COUNTA(C{DATA_START_ROW}:C{DATA_END_ROW}) & \" 笔订单\"")
     ws1.cell(row=TOTAL_ROW, column=8).font = FONT_TOTAL
     ws1.cell(row=TOTAL_ROW, column=8).fill = FILL_TOTAL
@@ -357,20 +364,22 @@ def main():
         sys.exit(1)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    # 同时确保对应年份的截图目录存在
-    shot_dir = f"/workspace/购买记录/截图/{year}"
-    os.makedirs(shot_dir, exist_ok=True)
+    # 同时确保对应年份及12个月的截图目录存在
+    shot_year_dir = f"/workspace/购买记录/截图/{year}"
+    os.makedirs(shot_year_dir, exist_ok=True)
+    for m in range(1, 13):
+        os.makedirs(os.path.join(shot_year_dir, f"{m:02d}月"), exist_ok=True)
 
     wb = build_year_workbook(year)
     wb.save(output_file)
 
     print(f"✅ 已生成 {year} 年度表格: {output_file}")
     print(f"   包含 4 个工作表:")
-    print(f"   1. 🛒购买记录明细 - 详细记录(预留1000行)")
+    print(f"   1. 🛒购买记录明细 - 详细记录(预留1000行，含截图超链接列)")
     print(f"   2. 📊月度统计 - 含柱状图+折线图")
     print(f"   3. 📈年度统计 - 当年总览")
     print(f"   4. 🏪平台分布 - 含饼图+柱状图")
-    print(f"   截图目录: {shot_dir}")
+    print(f"   截图目录: {shot_year_dir}/01月 ~ 12月")
 
 
 if __name__ == "__main__":
