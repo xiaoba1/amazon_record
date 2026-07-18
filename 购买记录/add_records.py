@@ -1,17 +1,13 @@
 """
-购买记录归档脚本（完整版）
+购买记录归档脚本（纯记录版，无截图）
 功能：
-  1. 写入明细记录（序号用真实数字，不用公式）
+  1. 写入明细记录（序号用真实数字）
   2. 自动重算并写入 月度统计/年度统计/平台分布 的数值
-  3. 截图存入对应月份目录，"截图"列写入超链接
-  4. 自动 git commit + push
+  3. 自动 git commit + push
 
-用法:
-  直接修改下方 RECORDS 列表，然后 python3 add_records.py
-  或由 AI 在对话中调用本脚本的核心函数
+字段：序号 / 购买平台 / 下单时间 / 商品名称 / 规格 / 数量 / 实付金额 / 订单号 / 备注
 """
 import os
-import sys
 import subprocess
 from datetime import datetime
 from collections import defaultdict
@@ -21,7 +17,6 @@ from openpyxl.chart import BarChart, PieChart, LineChart, Reference
 from openpyxl.chart.label import DataLabelList
 
 XLSX = "/workspace/购买记录/归档表格/购买记录_2026.xlsx"
-SHOT_BASE = "/workspace/购买记录/截图/2026"
 YEAR = 2026
 
 # ==================== 样式 ====================
@@ -33,7 +28,6 @@ FONT_TITLE = Font(name="微软雅黑", size=16, bold=True, color="FFFFFF")
 FONT_HEADER = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
 FONT_NORMAL = Font(name="微软雅黑", size=10, color="333333")
 FONT_TOTAL = Font(name="微软雅黑", size=11, bold=True, color="C00000")
-FONT_LINK = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
 FILL_HEADER = PatternFill("solid", fgColor=COLOR_HEADER)
 FILL_TOTAL = PatternFill("solid", fgColor=COLOR_TOTAL)
 FILL_TITLE = PatternFill("solid", fgColor=COLOR_TITLE)
@@ -46,54 +40,57 @@ thin_border = Border(
 ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
+# 字段顺序（无截图列）
+HEADERS = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "订单号", "备注"]
+NUM_COLS = len(HEADERS)  # 9
+
 
 def get_existing_records(ws):
-    """从明细表读取所有已有记录（用于重算统计）"""
+    """从明细表读取所有已有记录"""
     records = []
     row = 3
     while row <= 502:
-        platform = ws.cell(row=row, column=2).value
         time_val = ws.cell(row=row, column=3).value
         if not time_val:
             break
         records.append({
-            "platform": platform or "",
+            "platform": ws.cell(row=row, column=2).value or "",
             "time": time_val,
             "product": ws.cell(row=row, column=4).value or "",
             "spec": ws.cell(row=row, column=5).value or "",
             "qty": ws.cell(row=row, column=6).value or 0,
             "paid": ws.cell(row=row, column=7).value or 0,
             "order": ws.cell(row=row, column=8).value or "",
+            "remark": ws.cell(row=row, column=9).value or "",
         })
         row += 1
     return records
 
 
 def unmerge_all(ws):
-    """解除工作表所有合并单元格（重写前调用，避免 MergedCell 只读报错）"""
+    """解除工作表所有合并单元格"""
     merged = list(ws.merged_cells.ranges)
     for r in merged:
         ws.unmerge_cells(str(r))
 
 
 def rewrite_detail_sheet(ws, records):
-    """重写明细表：序号用真实数字"""
+    """重写明细表"""
     unmerge_all(ws)
-    # 清空数据区（第3行起）
+    # 清空数据区
     for row in range(3, 503):
-        for col in range(1, 11):
-            c = ws.cell(row=row, column=col)
-            c.value = None
-            c.hyperlink = None
+        for col in range(1, NUM_COLS + 1):
+            ws.cell(row=row, column=col).value = None
 
-    headers = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "订单号", "截图", "备注"]
-    for col_idx, h in enumerate(headers, 1):
+    # 表头
+    for col_idx, h in enumerate(HEADERS, 1):
         cell = ws.cell(row=2, column=col_idx, value=h)
         cell.font = FONT_HEADER
         cell.fill = FILL_HEADER
         cell.alignment = ALIGN_CENTER
         cell.border = thin_border
 
+    # 数据行
     for i, rec in enumerate(records):
         row = 3 + i
         ws.cell(row=row, column=1, value=i + 1)  # 真实序号
@@ -105,48 +102,34 @@ def rewrite_detail_sheet(ws, records):
         ws.cell(row=row, column=6, value=rec["qty"])
         ws.cell(row=row, column=7, value=rec["paid"])
         ws.cell(row=row, column=8, value=rec["order"])
-        # 截图列：检查文件是否存在
-        if rec.get("time"):
-            t = rec["time"] if isinstance(rec["time"], datetime) else datetime.fromisoformat(str(rec["time"]))
-            month_dir = os.path.join(SHOT_BASE, f"{t.month:02d}月")
-            date_str = t.strftime("%Y%m%d")
-            safe_product = rec["product"].replace("/", "_").replace("\\", "_")
-            shot_filename = f"{rec['platform']}_{date_str}_{safe_product}.png"
-            shot_full_path = os.path.join(month_dir, shot_filename)
-            if os.path.exists(shot_full_path):
-                cell = ws.cell(row=row, column=9)
-                cell.value = "📸 查看"
-                cell.hyperlink = f"file://{shot_full_path}"
+        if rec.get("remark"):
+            ws.cell(row=row, column=9, value=rec["remark"])
 
-        # 样式
-        for col in range(1, 11):
+        for col in range(1, NUM_COLS + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
-            if col == 9:
-                c.font = FONT_LINK
-                c.alignment = ALIGN_CENTER
-            else:
-                c.font = FONT_NORMAL
-                c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
+            c.font = FONT_NORMAL
+            c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
         ws.cell(row=row, column=7).number_format = "¥#,##0.00"
         ws.cell(row=row, column=6).number_format = "0"
         ws.row_dimensions[row].height = 22
 
     # 合计行
-    total_row = 3 + len(records) + 1
-    if len(records) > 0:
+    if records:
+        total_row = 3 + len(records) + 1
         ws.merge_cells(f"A{total_row}:F{total_row}")
-        ws.cell(row=total_row, column=1, value="📊 合计").font = FONT_TOTAL
+        ws.cell(row=total_row, column=1, value="📊 合计")
+        ws.cell(row=total_row, column=1).font = FONT_TOTAL
         ws.cell(row=total_row, column=1).fill = FILL_TOTAL
         ws.cell(row=total_row, column=1).alignment = ALIGN_CENTER
-        total_paid = sum(r["paid"] for r in records)
-        ws.cell(row=total_row, column=7, value=total_paid)
+        total_paid = sum(float(r["paid"] or 0) for r in records)
+        ws.cell(row=total_row, column=7, value=round(total_paid, 2))
         ws.cell(row=total_row, column=7).font = FONT_TOTAL
         ws.cell(row=total_row, column=7).fill = FILL_TOTAL
         ws.cell(row=total_row, column=7).number_format = "¥#,##0.00"
         ws.cell(row=total_row, column=7).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=7).border = thin_border
-        ws.merge_cells(f"H{total_row}:J{total_row}")
+        ws.merge_cells(f"H{total_row}:I{total_row}")
         ws.cell(row=total_row, column=8, value=f"{len(records)} 笔订单")
         ws.cell(row=total_row, column=8).font = FONT_TOTAL
         ws.cell(row=total_row, column=8).fill = FILL_TOTAL
@@ -156,14 +139,12 @@ def rewrite_detail_sheet(ws, records):
 
 
 def rewrite_month_sheet(ws, records):
-    """重写月度统计：直接写入计算值"""
+    """重写月度统计"""
     unmerge_all(ws)
-    # 清空
     for row in range(3, 20):
         for col in range(1, 7):
             ws.cell(row=row, column=col).value = None
 
-    # 按月统计
     month_stats = defaultdict(lambda: {"count": 0, "amount": 0})
     for r in records:
         t = r["time"]
@@ -171,9 +152,8 @@ def rewrite_month_sheet(ws, records):
             continue
         t = t if isinstance(t, datetime) else datetime.fromisoformat(str(t))
         if t.year == YEAR:
-            m = t.month
-            month_stats[m]["count"] += 1
-            month_stats[m]["amount"] += float(r["paid"] or 0)
+            month_stats[t.month]["count"] += 1
+            month_stats[t.month]["amount"] += float(r["paid"] or 0)
 
     total_amount = sum(s["amount"] for s in month_stats.values())
 
@@ -195,7 +175,6 @@ def rewrite_month_sheet(ws, records):
         ws.cell(row=row, column=5).number_format = "¥#,##0.00"
         ws.cell(row=row, column=6).number_format = "0.00%"
 
-    # 合计
     total_row = 15
     total_count = sum(s["count"] for s in month_stats.values())
     ws.merge_cells(f"A{total_row}:B{total_row}")
@@ -214,10 +193,8 @@ def rewrite_month_sheet(ws, records):
     ws.cell(row=total_row, column=5).number_format = "¥#,##0.00"
     ws.cell(row=total_row, column=6).number_format = "0.00%"
 
-    # 清除旧图表，重新添加
+    # 图表
     ws._charts = []
-
-    # 月度金额柱状图
     bar = BarChart()
     bar.type = "col"
     bar.style = 10
@@ -232,7 +209,6 @@ def rewrite_month_sheet(ws, records):
     bar.width = 22
     ws.add_chart(bar, "H2")
 
-    # 月度笔数折线图
     line = LineChart()
     line.title = f"{YEAR}年 月度购买笔数趋势"
     line.y_axis.title = "笔数"
@@ -276,7 +252,6 @@ def rewrite_year_sheet(ws, records):
     ws.cell(row=row, column=3).number_format = "¥#,##0.00"
     ws.cell(row=row, column=4).number_format = "¥#,##0.00"
 
-    # 柱状图
     ws._charts = []
     bar = BarChart()
     bar.type = "col"
@@ -345,7 +320,6 @@ def rewrite_platform_sheet(ws, records):
     ws.cell(row=plat_total_row, column=3).number_format = "¥#,##0.00"
     ws.cell(row=plat_total_row, column=4).number_format = "0.00%"
 
-    # 图表
     ws._charts = []
     pie = PieChart()
     pie.title = f"{YEAR}年 各平台购买金额占比"
@@ -378,20 +352,13 @@ def add_records(new_records):
     wb = load_workbook(XLSX)
     ws_detail = wb["🛒购买记录明细"]
 
-    # 读取已有记录
     existing = get_existing_records(ws_detail)
     print(f"已有记录: {len(existing)} 条")
 
-    # 追加新记录
     for rec in new_records:
-        # 创建月份目录（按需）
-        t = rec["time"]
-        month_dir = os.path.join(SHOT_BASE, f"{t.month:02d}月")
-        os.makedirs(month_dir, exist_ok=True)
         existing.append(rec)
         print(f"  + 新增: {rec['platform']} | {rec['time']} | {rec['product']} | ¥{rec['paid']}")
 
-    # 重写所有工作表（用真实数值）
     rewrite_detail_sheet(ws_detail, existing)
     rewrite_month_sheet(wb["📊月度统计"], existing)
     rewrite_year_sheet(wb["📈年度统计"], existing)
@@ -404,19 +371,15 @@ def add_records(new_records):
 def git_commit_push():
     """git add + commit + push"""
     repo_dir = "/workspace"
-    # add
     subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
-    # 检查是否有变更
     result = subprocess.run(["git", "status", "--porcelain"], cwd=repo_dir, capture_output=True, text=True)
     if not result.stdout.strip():
         print("git: 无变更")
         return False
-    # commit
     subprocess.run(
         ["git", "commit", "-m", f"feat: 更新购买记录 {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
         cwd=repo_dir, check=True
     )
-    # push
     push = subprocess.run(["git", "push"], cwd=repo_dir, capture_output=True, text=True)
     if push.returncode == 0:
         print("✅ git push 成功")
@@ -426,8 +389,7 @@ def git_commit_push():
         return False
 
 
-# ==================== 待添加的记录 ====================
-# AI 在对话中会修改这个列表，然后运行脚本
+# ==================== 已确认的记录 ====================
 RECORDS = [
     {
         "platform": "1688",
@@ -453,7 +415,6 @@ RECORDS = [
 
 
 if __name__ == "__main__":
-    # 检查是否已存在相同记录（避免重复）
     wb = load_workbook(XLSX)
     ws = wb["🛒购买记录明细"]
     existing = get_existing_records(ws)
@@ -462,11 +423,8 @@ if __name__ == "__main__":
 
     if new_to_add:
         print(f"新增 {len(new_to_add)} 条记录")
-        add_records(new_to_add)
     else:
-        print("记录已存在，仅重算统计")
-        # 仍然重算，修复之前公式无值的问题
-        add_records([])  # 传空列表，只重算
+        print("无新增记录，仅重写表格（移除截图列）")
+    add_records(new_to_add)
 
-    # git
     git_commit_push()
