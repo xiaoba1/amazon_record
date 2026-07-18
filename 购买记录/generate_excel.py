@@ -54,7 +54,7 @@ def build_year_workbook(year: int):
     """生成指定年度的 Excel 表格"""
     wb = Workbook()
     DATA_START_ROW = 3
-    DATA_END_ROW = 1002  # 预留 1000 行/年（足够日常使用）
+    DATA_END_ROW = 502  # 预留 500 行/年（日常足够，过多会拖慢重算）
 
     # ============================================================
     # Sheet 1: 🛒 购买记录明细
@@ -147,15 +147,17 @@ def build_year_workbook(year: int):
         row = start_row + m - 1
         ws2.cell(row=row, column=1, value=year)
         ws2.cell(row=row, column=2, value=f"{m:02d}月")
+        # 用 COUNTIFS/SUMIFS 按日期范围统计（比 SUMPRODUCT 快得多）
+        m_start = f"DATE({year},{m},1)"
+        m_end = f"DATE({year},{m+1 if m<12 else 1},1)" + (f"+365" if m == 12 else "")
         ws2.cell(row=row, column=3, value=(
-            f'=SUMPRODUCT((YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-            f'(MONTH(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={m})*'
-            f'(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW}<>""))'
+            f'=COUNTIFS(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&{m_start},'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&{m_end})'
         ))
         ws2.cell(row=row, column=4, value=(
-            f'=SUMPRODUCT((YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-            f'(MONTH(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={m})*'
-            f'(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW}))'
+            f'=SUMIFS(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW},'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&{m_start},'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&{m_end})'
         ))
         ws2.cell(row=row, column=5, value=f'=IF(C{row}=0,0,D{row}/C{row})')
         ws2.cell(row=row, column=6, value=f'=IF(D{row}=0,0,D{row}/SUM($D${start_row}:$D${start_row+11}))')
@@ -239,12 +241,13 @@ def build_year_workbook(year: int):
     row = 3
     ws3.cell(row=row, column=1, value=year)
     ws3.cell(row=row, column=2, value=(
-        f'=SUMPRODUCT((YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-        f'(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW}<>""))'
+        f'=COUNTIFS(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&DATE({year},1,1),'
+        f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&DATE({year+1},1,1))'
     ))
     ws3.cell(row=row, column=3, value=(
-        f'=SUMPRODUCT((YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-        f'(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW}))'
+        f'=SUMIFS(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW},'
+        f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&DATE({year},1,1),'
+        f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&DATE({year+1},1,1))'
     ))
     ws3.cell(row=row, column=4, value=f'=IF(B{row}=0,0,C{row}/B{row})')
     for col in range(1, 6):
@@ -280,19 +283,20 @@ def build_year_workbook(year: int):
 
     platforms = ["抖音", "1688", "淘宝", "京东", "拼多多", "天猫", "苏宁", "其他"]
     plat_start = 3
-    # 平台统计限定在当年
+    # 平台统计：用 COUNTIFS/SUMIFS（平台 + 当年日期范围），比 SUMPRODUCT 快得多
     for i, p in enumerate(platforms):
         row = plat_start + i
         ws4.cell(row=row, column=1, value=p)
         ws4.cell(row=row, column=2, value=(
-            f'=SUMPRODUCT((\'🛒购买记录明细\'!B{DATA_START_ROW}:B{DATA_END_ROW}="{p}")*'
-            f'(YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-            f'(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW}<>""))'
+            f'=COUNTIFS(\'🛒购买记录明细\'!B{DATA_START_ROW}:B{DATA_END_ROW},"{p}",'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&DATE({year},1,1),'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&DATE({year+1},1,1))'
         ))
         ws4.cell(row=row, column=3, value=(
-            f'=SUMPRODUCT((\'🛒购买记录明细\'!B{DATA_START_ROW}:B{DATA_END_ROW}="{p}")*'
-            f'(YEAR(\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW})={year})*'
-            f'(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW}))'
+            f'=SUMIFS(\'🛒购买记录明细\'!G{DATA_START_ROW}:G{DATA_END_ROW},'
+            f'\'🛒购买记录明细\'!B{DATA_START_ROW}:B{DATA_END_ROW},"{p}",'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},">="&DATE({year},1,1),'
+            f'\'🛒购买记录明细\'!C{DATA_START_ROW}:C{DATA_END_ROW},"<"&DATE({year+1},1,1))'
         ))
         ws4.cell(row=row, column=4, value=f'=IF(C{row}=0,0,C{row}/SUM($C${plat_start}:$C${plat_start+len(platforms)-1}))')
         for col in range(1, 5):
