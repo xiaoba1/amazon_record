@@ -475,8 +475,8 @@ def add_records(new_records, new_shipments=None):
         existing.append(rec)
         print(f"  + 新增购买: {rec['platform']} | {rec['time']} | {rec['product']} | ¥{rec['paid']}")
 
-    rewrite_detail_sheet(ws_detail, existing)
-
+    # 先处理出货记录（包括新增），便于反向回填购买记录的"关联出货单"
+    existing_shipments = []
     if "📦出货记录" in wb.sheetnames:
         ws_shipment = wb["📦出货记录"]
         existing_shipments = get_existing_shipments(ws_shipment)
@@ -488,6 +488,18 @@ def add_records(new_records, new_shipments=None):
                 print(f"  + 新增出货: {ship['ship_platform']} | {ship['order_date']} | {ship['product']} | ¥{ship['revenue']}")
 
         rewrite_shipment_sheet(ws_shipment, existing_shipments)
+
+    # 反向回填：根据出货记录的 purchase_ref，把对应出货单号写到购买记录的 shipment 字段
+    pur_to_ship = {s["purchase_ref"]: s["ship_order"] for s in existing_shipments if s.get("purchase_ref")}
+    filled = 0
+    for rec in existing:
+        if not rec.get("shipment") and rec["order"] in pur_to_ship:
+            rec["shipment"] = pur_to_ship[rec["order"]]
+            filled += 1
+    if filled:
+        print(f"  ↻ 回填关联出货单: {filled} 条")
+
+    rewrite_detail_sheet(ws_detail, existing)
 
     rewrite_month_sheet(wb["📊月度统计"], existing)
     rewrite_year_sheet(wb["📈年度统计"], existing)
