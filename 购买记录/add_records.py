@@ -43,27 +43,35 @@ ALIGN_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
 
 def auto_fit_columns(ws, headers, data_start_row=3, data_end_row=502, max_width=50, min_width=8):
-    """自适应列宽：根据表头+数据内容计算每列最大宽度"""
+    """自适应列宽：根据表头+数据内容计算每列最大宽度
+    日元列(出货表9-12)显示为 'JPY 1,234'，元列(购买表7)显示为 '¥1,234.00'
+    """
     from openpyxl.utils import get_column_letter
+    # 判断是否为出货记录表（表头含"销售价(日元)"）
+    is_shipment = any("日元" in str(h) for h in headers)
+    jpy_cols = (9, 10, 11, 12) if is_shipment else ()
+    cny_cols = (7,) if not is_shipment else ()
+
     num_cols = len(headers)
     for col_idx in range(1, num_cols + 1):
         col_letter = get_column_letter(col_idx)
         max_len = len(str(headers[col_idx - 1] or ""))
-        # 检查数据行
         for row in range(data_start_row, min(data_end_row + 1, data_start_row + 200)):
             val = ws.cell(row=row, column=col_idx).value
             if val is None:
                 continue
-            # 数值类按格式估算宽度
             if isinstance(val, (int, float)):
-                s = f"¥{val:,.2f}" if col_idx in (7, 9, 10, 11, 12) else str(val)
+                if col_idx in jpy_cols:
+                    s = f"JPY {int(val):,}"
+                elif col_idx in cny_cols:
+                    s = f"¥{val:,.2f}"
+                else:
+                    s = str(val)
             else:
                 s = str(val)
-            # 中文字符按2个宽度计算
             width = sum(2 if ord(c) > 127 else 1 for c in s)
             if width > max_len:
                 max_len = width
-        # 加 2 个字符的边距，限制在 [min_width, max_width]
         final_width = max(min_width, min(max_width, max_len + 2))
         ws.column_dimensions[col_letter].width = final_width
 
@@ -72,7 +80,7 @@ HEADERS = ["序号", "购买平台", "下单时间", "商品名称", "规格", "
 NUM_COLS = len(HEADERS)  # 10
 
 # 出货记录字段
-SHIPMENT_HEADERS = ["序号", "出货平台", "订购日期", "发货日期", "商品名称", "规格", "SKU", "数量", "销售价", "税金", "手续费", "销售额", "出货订单号", "关联购买记录"]
+SHIPMENT_HEADERS = ["序号", "出货平台", "订购日期", "发货日期", "商品名称", "规格", "SKU", "数量", "销售价(日元)", "税金(日元)", "手续费(日元)", "销售额(日元)", "出货订单号", "关联购买记录"]
 SHIPMENT_NUM_COLS = len(SHIPMENT_HEADERS)  # 14
 
 
@@ -299,10 +307,10 @@ def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
                 continue  # 已单独设置字体
             c.font = FONT_NORMAL
             c.alignment = ALIGN_CENTER if col in (1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13) else ALIGN_LEFT
-        ws.cell(row=row, column=9).number_format = "¥#,##0.00"
-        ws.cell(row=row, column=10).number_format = "¥#,##0.00"
-        ws.cell(row=row, column=11).number_format = "¥#,##0.00"
-        ws.cell(row=row, column=12).number_format = "¥#,##0.00"
+        ws.cell(row=row, column=9).number_format = '"JPY" #,##0'
+        ws.cell(row=row, column=10).number_format = '"JPY" #,##0'
+        ws.cell(row=row, column=11).number_format = '"JPY" #,##0'
+        ws.cell(row=row, column=12).number_format = '"JPY" #,##0'
         ws.cell(row=row, column=8).number_format = "0"
         ws.row_dimensions[row].height = 22
 
@@ -322,7 +330,7 @@ def rewrite_shipment_sheet(ws, shipments, purchase_row_map=None):
         ws.cell(row=total_row, column=8).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=8).border = thin_border
         ws.merge_cells(f"I{total_row}:L{total_row}")
-        ws.cell(row=total_row, column=9, value=f"总销售额: ¥{round(total_revenue, 2):,.2f}")
+        ws.cell(row=total_row, column=9, value=f"总销售额: JPY {int(total_revenue):,}")
         ws.cell(row=total_row, column=9).font = FONT_TOTAL
         ws.cell(row=total_row, column=9).fill = FILL_TOTAL
         ws.cell(row=total_row, column=9).alignment = ALIGN_CENTER
