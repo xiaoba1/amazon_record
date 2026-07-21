@@ -68,6 +68,69 @@ INVENTORY_HEADERS = ["序号", "商品名称", "规格", "当前库存", "采购
 RELATION_HEADERS = ["序号", "进货订单号", "销售订单号", "商品名称", "规格", "采购数量", "销售数量", "库存", "采购金额(元)", "销售金额(日元)", "利润(日元)"]
 
 
+def extract_keywords(text):
+    """提取关键词（使用2-gram方式，避免整个字符串被当成一个词）"""
+    if not text:
+        return set()
+    # 去除数字、单位
+    import re
+    text_clean = re.sub(r'\d+ml|\d+g|\d+kg|\d+cm|\d+mm', '', str(text), flags=re.IGNORECASE)
+    # 去除常见无意义修饰词
+    remove_words = ["创意", "世界杯", "耐热", "耐冷", "专业", "表面", "车用",
+                    "牛皮纸盒", "包装", "圆形", "电镀", "圆球形", "海绵"]
+    for w in remove_words:
+        text_clean = text_clean.replace(w, "")
+    # 提取所有中文连续串
+    chinese_segments = re.findall(r'[\u4e00-\u9fa5]+', text_clean)
+    # 对每段用2-gram提取关键词
+    keywords = set()
+    for seg in chinese_segments:
+        if len(seg) >= 2:
+            # 2-gram
+            for i in range(len(seg) - 1):
+                keywords.add(seg[i:i+2])
+            # 3-gram（用于"大力神杯"这样的词）
+            for i in range(len(seg) - 2):
+                keywords.add(seg[i:i+3])
+        elif len(seg) == 1:
+            keywords.add(seg)
+    return keywords
+
+
+def calculate_match_score(sale_rec, pur_rec):
+    """综合匹配得分：商品名相似度 + 规格相似度 + 关键词匹配
+    
+    返回: (score, common_keywords)
+    """
+    from difflib import SequenceMatcher
+    # 1. 商品名相似度
+    name_ratio = SequenceMatcher(None, sale_rec["product"], pur_rec["product"]).ratio()
+    
+    # 2. 规格相似度
+    spec_ratio = 0
+    if sale_rec.get("spec") and pur_rec.get("spec"):
+        spec_ratio = SequenceMatcher(None, sale_rec["spec"], pur_rec["spec"]).ratio()
+    
+    # 3. 关键词匹配（2-gram）
+    sale_kw = extract_keywords(sale_rec["product"])
+    pur_kw = extract_keywords(pur_rec["product"])
+    common_kw = sale_kw & pur_kw
+    kw_score = len(common_kw) / max(len(sale_kw | pur_kw), 1) if (sale_kw | pur_kw) else 0
+    
+    # 4. 规格关键词匹配
+    spec_kw_score = 0
+    if sale_rec.get("spec") and pur_rec.get("spec"):
+        sale_spec_kw = extract_keywords(sale_rec["spec"])
+        pur_spec_kw = extract_keywords(pur_rec["spec"])
+        common_spec_kw = sale_spec_kw & pur_spec_kw
+        if sale_spec_kw | pur_spec_kw:
+            spec_kw_score = len(common_spec_kw) / len(sale_spec_kw | pur_spec_kw)
+    
+    # 综合得分：提高规格关键词权重，区分不同规格商品
+    score = name_ratio * 0.15 + spec_ratio * 0.10 + kw_score * 0.35 + spec_kw_score * 0.40
+    return score, common_kw
+
+
 def create_purchase_sheet(wb, records):
     if "📥进货表" in wb.sheetnames:
         idx = wb.sheetnames.index("📥进货表")
@@ -247,41 +310,37 @@ def create_inventory_sheet(wb, purchases, sales):
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
 
-    from difflib import SequenceMatcher
-
+    # 使用与关联视图相同的匹配算法
     inventory = {}
-    for p in purchases:
-        key = (p["product"], p["spec"])
-        if key not in inventory:
-            inventory[key] = {
-                "product": p["product"],
-                "spec": p["spec"],
-                "qty": 0,
-                "paid": 0,
-                "last_purchase": p["time"],
-                "last_sale": None,
-            }
-        inventory[key]["qty"] += p["qty"]
-        inventory[key]["paid"] += p["paid"]
-        if p["time"] > inventory[key]["last_purchase"]:
-            inventory[key]["last_purchase"] = p["time"]
+    for i, p in enumerate(purchases):
+        key = f"pur_{i}"
+        inventory[key] = {
+            "product": p["product"],
+            "spec": p["spec"],
+            "qty": p["qty"],
+            "paid": p["paid"],
+            "last_purchase": p["time"],
+            "last_sale": None,
+            "pur_idx": i,
+        }
 
+    # 为每个销售记录匹配最佳的购买记录（复用关联视图的匹配逻辑）
     for s in sales:
-        matched_key = None
+        best_key = None
         best_score = 0
-        for p_key in inventory:
-            p_product, p_spec = p_key
-            score1 = SequenceMatcher(None, s["product"], p_product).ratio()
-            score2 = SequenceMatcher(None, s["spec"], p_spec).ratio() if s["spec"] and p_spec else 0
-            score = score1 * 0.7 + score2 * 0.3
-            if score > best_score and score > 0.3:
+        for key, item in inventory.items():
+            score, _ = calculate_match_score(s, {
+                "product": item["product"],
+                "spec": item["spec"],
+            })
+            if score > best_score:
                 best_score = score
-                matched_key = p_key
+                best_key = key
 
-        if matched_key:
-            inventory[matched_key]["qty"] -= s["qty"]
-            if s["order_date"] > (inventory[matched_key]["last_sale"] or datetime.min):
-                inventory[matched_key]["last_sale"] = s["order_date"]
+        if best_key and best_score > 0.08:
+            inventory[best_key]["qty"] -= s["qty"]
+            if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
+                inventory[best_key]["last_sale"] = s["order_date"]
 
     items = sorted(inventory.values(), key=lambda x: x["qty"], reverse=True)
     for i, item in enumerate(items):
@@ -365,65 +424,7 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
 
-    from difflib import SequenceMatcher
     from openpyxl.worksheet.hyperlink import Hyperlink
-
-    def extract_keywords(text):
-        """提取关键词（使用2-gram方式，避免整个字符串被当成一个词）"""
-        if not text:
-            return set()
-        # 去除数字、单位
-        import re
-        text_clean = re.sub(r'\d+ml|\d+g|\d+kg|\d+cm|\d+mm', '', str(text), flags=re.IGNORECASE)
-        # 去除常见无意义修饰词
-        remove_words = ["创意", "世界杯", "耐热", "耐冷", "专业", "表面", "车用",
-                        "牛皮纸盒", "包装", "圆形", "电镀", "圆球形", "海绵"]
-        for w in remove_words:
-            text_clean = text_clean.replace(w, "")
-        # 提取所有中文连续串
-        chinese_segments = re.findall(r'[\u4e00-\u9fa5]+', text_clean)
-        # 对每段用2-gram提取关键词
-        keywords = set()
-        for seg in chinese_segments:
-            if len(seg) >= 2:
-                # 2-gram
-                for i in range(len(seg) - 1):
-                    keywords.add(seg[i:i+2])
-                # 3-gram（用于"大力神杯"这样的词）
-                for i in range(len(seg) - 2):
-                    keywords.add(seg[i:i+3])
-            elif len(seg) == 1:
-                keywords.add(seg)
-        return keywords
-
-    def calculate_match_score(sale_rec, pur_rec):
-        """综合匹配得分：商品名相似度 + 规格相似度 + 关键词匹配"""
-        # 1. 商品名相似度
-        name_ratio = SequenceMatcher(None, sale_rec["product"], pur_rec["product"]).ratio()
-        
-        # 2. 规格相似度
-        spec_ratio = 0
-        if sale_rec.get("spec") and pur_rec.get("spec"):
-            spec_ratio = SequenceMatcher(None, sale_rec["spec"], pur_rec["spec"]).ratio()
-        
-        # 3. 关键词匹配（2-gram）
-        sale_kw = extract_keywords(sale_rec["product"])
-        pur_kw = extract_keywords(pur_rec["product"])
-        common_kw = sale_kw & pur_kw
-        kw_score = len(common_kw) / max(len(sale_kw | pur_kw), 1) if (sale_kw | pur_kw) else 0
-        
-        # 4. 规格关键词匹配
-        spec_kw_score = 0
-        if sale_rec.get("spec") and pur_rec.get("spec"):
-            sale_spec_kw = extract_keywords(sale_rec["spec"])
-            pur_spec_kw = extract_keywords(pur_rec["spec"])
-            common_spec_kw = sale_spec_kw & pur_spec_kw
-            if sale_spec_kw | pur_spec_kw:
-                spec_kw_score = len(common_spec_kw) / len(sale_spec_kw | pur_spec_kw)
-        
-        # 综合得分：提高规格关键词权重，区分不同规格商品
-        score = name_ratio * 0.15 + spec_ratio * 0.10 + kw_score * 0.35 + spec_kw_score * 0.40
-        return score, common_kw
 
     # 构建商品组：以购买记录为基准
     product_groups = {}
