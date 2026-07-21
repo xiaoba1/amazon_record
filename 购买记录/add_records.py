@@ -76,8 +76,8 @@ def auto_fit_columns(ws, headers, data_start_row=3, data_end_row=502, max_width=
         ws.column_dimensions[col_letter].width = final_width
 
 # 字段顺序（无截图列，增加关联出货单列）
-HEADERS = ["序号", "购买平台", "下单时间", "商品名称", "规格", "数量", "实付金额(元)", "购买订单号", "关联出货单", "备注"]
-NUM_COLS = len(HEADERS)  # 10
+HEADERS = ["序号", "购买平台", "下单时间", "商品名称", "规格", "购买数量", "实付金额(元)", "购买订单号", "关联出货单", "出货数量", "库存", "备注"]
+NUM_COLS = len(HEADERS)  # 12
 
 # 出货记录字段
 SHIPMENT_HEADERS = ["序号", "出货平台", "订购日期", "发货日期", "商品名称", "规格", "SKU", "数量", "销售价(日元)", "税金(日元)", "手续费(日元)", "销售额(日元)", "出货订单号", "关联购买记录"]
@@ -101,7 +101,9 @@ def get_existing_records(ws):
             "paid": ws.cell(row=row, column=7).value or 0,
             "order": ws.cell(row=row, column=8).value or "",
             "shipment": ws.cell(row=row, column=9).value or "",
-            "remark": ws.cell(row=row, column=10).value or "",
+            "ship_qty": ws.cell(row=row, column=10).value or 0,
+            "stock": ws.cell(row=row, column=11).value or 0,
+            "remark": ws.cell(row=row, column=12).value or "",
         })
         row += 1
     return records
@@ -183,31 +185,34 @@ def rewrite_detail_sheet(ws, records, shipment_row_map=None):
         # 关联出货单：写入带超链接的文本（点击跳转到出货记录表对应行）
         if rec.get("shipment"):
             ship_order = str(rec["shipment"])
-            # 在出货记录表中查找该出货单号所在行
             ship_row = None
             if shipment_row_map:
                 ship_row = shipment_row_map.get(ship_order)
             ship_cell = ws.cell(row=row, column=9, value=ship_order)
             if ship_row:
-                # 工作簿内部跳转：必须用 Hyperlink 对象 + location 属性（target 留空）
                 from openpyxl.worksheet.hyperlink import Hyperlink
                 ship_cell.hyperlink = Hyperlink(ref=f"I{row}", location=f"'📦出货记录'!A{ship_row}", display=ship_order)
                 ship_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
             else:
                 ship_cell.font = FONT_NORMAL
             ship_cell.alignment = ALIGN_CENTER
+        # 出货数量和库存
+        ws.cell(row=row, column=10, value=rec.get("ship_qty", 0))
+        ws.cell(row=row, column=11, value=rec.get("stock", 0))
         if rec.get("remark"):
-            ws.cell(row=row, column=10, value=rec["remark"])
+            ws.cell(row=row, column=12, value=rec["remark"])
 
         for col in range(1, NUM_COLS + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
             if col == 9 and rec.get("shipment"):
-                continue  # 已单独设置字体
+                continue
             c.font = FONT_NORMAL
-            c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7) else ALIGN_LEFT
+            c.alignment = ALIGN_CENTER if col in (1, 2, 3, 6, 7, 10, 11) else ALIGN_LEFT
         ws.cell(row=row, column=7).number_format = "¥#,##0.00"
         ws.cell(row=row, column=6).number_format = "0"
+        ws.cell(row=row, column=10).number_format = "0"
+        ws.cell(row=row, column=11).number_format = "0"
         ws.row_dimensions[row].height = 22
 
     # 合计行
@@ -231,6 +236,18 @@ def rewrite_detail_sheet(ws, records, shipment_row_map=None):
         ws.cell(row=total_row, column=8).fill = FILL_TOTAL
         ws.cell(row=total_row, column=8).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=8).border = thin_border
+        # 库存统计
+        total_stock = sum(float(r.get("stock", 0) or 0) for r in records)
+        ws.cell(row=total_row, column=11, value=int(total_stock))
+        ws.cell(row=total_row, column=11).font = FONT_TOTAL
+        ws.cell(row=total_row, column=11).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=11).alignment = ALIGN_CENTER
+        ws.cell(row=total_row, column=11).border = thin_border
+        ws.cell(row=total_row, column=12, value="库存合计")
+        ws.cell(row=total_row, column=12).font = FONT_TOTAL
+        ws.cell(row=total_row, column=12).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=12).alignment = ALIGN_CENTER
+        ws.cell(row=total_row, column=12).border = thin_border
         ws.row_dimensions[total_row].height = 28
 
     # 自适应列宽
@@ -651,6 +668,8 @@ PURCHASE_RECORDS = [
         "paid": 5.90,
         "order": "3311879379799327755",
         "shipment": "503-95444475-5097463",
+        "ship_qty": 1,
+        "stock": 0,
         "remark": "",
     },
     {
@@ -662,7 +681,22 @@ PURCHASE_RECORDS = [
         "paid": 20.00,
         "order": "260718-641864876461684",
         "shipment": "249-6387958-2579060",
+        "ship_qty": 1,
+        "stock": 0,
         "remark": "",
+    },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 7, 21, 11, 0, 40),
+        "product": "玻璃修复膏玻璃表面专业抛光",
+        "spec": "50g+海绵",
+        "qty": 2,
+        "paid": 11.89,
+        "order": "3313191614834136171",
+        "shipment": "249-4866874-7926210",
+        "ship_qty": 1,
+        "stock": 1,
+        "remark": "最低起订2个，卖出1个，库存1个",
     },
 ]
 
@@ -697,6 +731,21 @@ SHIPMENT_RECORDS = [
         "revenue": 1714,
         "ship_order": "249-6387958-2579060",
         "purchase_ref": "260718-641864876461684",
+    },
+    {
+        "ship_platform": "Amazon日本站",
+        "order_date": datetime(2026, 7, 20),
+        "ship_date": datetime(2026, 7, 22),
+        "product": "玻璃修复膏 50g 车用",
+        "spec": "50g",
+        "sku": "1X-GB0W-BY30",
+        "qty": 1,
+        "price": 1122,
+        "tax": 102,
+        "fee": 117,
+        "revenue": 1005,
+        "ship_order": "249-4866874-7926210",
+        "purchase_ref": "3313191614834136171",
     },
 ]
 
