@@ -369,19 +369,31 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
     from openpyxl.worksheet.hyperlink import Hyperlink
 
     def extract_keywords(text):
-        """提取关键词（去除常见修饰词和单字）"""
+        """提取关键词（使用2-gram方式，避免整个字符串被当成一个词）"""
         if not text:
             return set()
-        # 去除数字、单位、常见修饰词
-        remove_words = ["500ml", "500ml", "ml", "透明", "圆形", "电镀", "圆球形",
-                        "牛皮纸盒", "包装", "创意", "世界杯", "耐热", "耐冷",
-                        "专业", "表面", "车用", "50g", "30g", "海绵"]
-        text_lower = str(text).lower()
-        for w in remove_words:
-            text_lower = text_lower.replace(w, "")
-        # 提取中文关键词（2字以上）
+        # 去除数字、单位
         import re
-        keywords = set(re.findall(r'[\u4e00-\u9fa5]{2,}', text_lower))
+        text_clean = re.sub(r'\d+ml|\d+g|\d+kg|\d+cm|\d+mm', '', str(text), flags=re.IGNORECASE)
+        # 去除常见无意义修饰词
+        remove_words = ["创意", "世界杯", "耐热", "耐冷", "专业", "表面", "车用",
+                        "牛皮纸盒", "包装", "圆形", "电镀", "圆球形", "海绵"]
+        for w in remove_words:
+            text_clean = text_clean.replace(w, "")
+        # 提取所有中文连续串
+        chinese_segments = re.findall(r'[\u4e00-\u9fa5]+', text_clean)
+        # 对每段用2-gram提取关键词
+        keywords = set()
+        for seg in chinese_segments:
+            if len(seg) >= 2:
+                # 2-gram
+                for i in range(len(seg) - 1):
+                    keywords.add(seg[i:i+2])
+                # 3-gram（用于"大力神杯"这样的词）
+                for i in range(len(seg) - 2):
+                    keywords.add(seg[i:i+3])
+            elif len(seg) == 1:
+                keywords.add(seg)
         return keywords
 
     def calculate_match_score(sale_rec, pur_rec):
@@ -394,13 +406,13 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         if sale_rec.get("spec") and pur_rec.get("spec"):
             spec_ratio = SequenceMatcher(None, sale_rec["spec"], pur_rec["spec"]).ratio()
         
-        # 3. 关键词匹配
+        # 3. 关键词匹配（2-gram）
         sale_kw = extract_keywords(sale_rec["product"])
         pur_kw = extract_keywords(pur_rec["product"])
         common_kw = sale_kw & pur_kw
         kw_score = len(common_kw) / max(len(sale_kw | pur_kw), 1) if (sale_kw | pur_kw) else 0
         
-        # 4. 规格关键词匹配（透明/琥珀色等）
+        # 4. 规格关键词匹配
         spec_kw_score = 0
         if sale_rec.get("spec") and pur_rec.get("spec"):
             sale_spec_kw = extract_keywords(sale_rec["spec"])
@@ -409,8 +421,8 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
             if sale_spec_kw | pur_spec_kw:
                 spec_kw_score = len(common_spec_kw) / len(sale_spec_kw | pur_spec_kw)
         
-        # 综合得分
-        score = name_ratio * 0.3 + spec_ratio * 0.2 + kw_score * 0.3 + spec_kw_score * 0.2
+        # 综合得分：提高规格关键词权重，区分不同规格商品
+        score = name_ratio * 0.15 + spec_ratio * 0.10 + kw_score * 0.35 + spec_kw_score * 0.40
         return score, common_kw
 
     # 构建商品组：以购买记录为基准
@@ -435,8 +447,8 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
                 best_group = group_key
                 best_common_kw = common_kw
         
-        # 阈值降低到0.15，因为商品名差异大
-        if best_group and best_score > 0.15:
+        # 阈值降低到0.08，因为商品名差异大
+        if best_group and best_score > 0.08:
             product_groups[best_group]["sales"].append(s)
             if best_common_kw:
                 product_groups[best_group]["match_keywords"] = best_common_kw
