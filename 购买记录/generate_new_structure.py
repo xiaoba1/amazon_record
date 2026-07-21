@@ -343,7 +343,7 @@ def create_inventory_sheet(wb, purchases, sales):
     ws.freeze_panes = "A3"
 
 
-def create_relation_sheet(wb, purchases, sales):
+def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row_map=None):
     if "🔗关联视图" in wb.sheetnames:
         idx = wb.sheetnames.index("🔗关联视图")
         old_ws = wb.worksheets[idx]
@@ -366,60 +366,164 @@ def create_relation_sheet(wb, purchases, sales):
     ws.row_dimensions[2].height = 28
 
     from difflib import SequenceMatcher
+    from openpyxl.worksheet.hyperlink import Hyperlink
 
-    relations = []
+    def extract_keywords(text):
+        """提取关键词（去除常见修饰词和单字）"""
+        if not text:
+            return set()
+        # 去除数字、单位、常见修饰词
+        remove_words = ["500ml", "500ml", "ml", "透明", "圆形", "电镀", "圆球形",
+                        "牛皮纸盒", "包装", "创意", "世界杯", "耐热", "耐冷",
+                        "专业", "表面", "车用", "50g", "30g", "海绵"]
+        text_lower = str(text).lower()
+        for w in remove_words:
+            text_lower = text_lower.replace(w, "")
+        # 提取中文关键词（2字以上）
+        import re
+        keywords = set(re.findall(r'[\u4e00-\u9fa5]{2,}', text_lower))
+        return keywords
+
+    def calculate_match_score(sale_rec, pur_rec):
+        """综合匹配得分：商品名相似度 + 规格相似度 + 关键词匹配"""
+        # 1. 商品名相似度
+        name_ratio = SequenceMatcher(None, sale_rec["product"], pur_rec["product"]).ratio()
+        
+        # 2. 规格相似度
+        spec_ratio = 0
+        if sale_rec.get("spec") and pur_rec.get("spec"):
+            spec_ratio = SequenceMatcher(None, sale_rec["spec"], pur_rec["spec"]).ratio()
+        
+        # 3. 关键词匹配
+        sale_kw = extract_keywords(sale_rec["product"])
+        pur_kw = extract_keywords(pur_rec["product"])
+        common_kw = sale_kw & pur_kw
+        kw_score = len(common_kw) / max(len(sale_kw | pur_kw), 1) if (sale_kw | pur_kw) else 0
+        
+        # 4. 规格关键词匹配（透明/琥珀色等）
+        spec_kw_score = 0
+        if sale_rec.get("spec") and pur_rec.get("spec"):
+            sale_spec_kw = extract_keywords(sale_rec["spec"])
+            pur_spec_kw = extract_keywords(pur_rec["spec"])
+            common_spec_kw = sale_spec_kw & pur_spec_kw
+            if sale_spec_kw | pur_spec_kw:
+                spec_kw_score = len(common_spec_kw) / len(sale_spec_kw | pur_spec_kw)
+        
+        # 综合得分
+        score = name_ratio * 0.3 + spec_ratio * 0.2 + kw_score * 0.3 + spec_kw_score * 0.2
+        return score, common_kw
+
+    # 构建商品组：以购买记录为基准
     product_groups = {}
+    for i, p in enumerate(purchases):
+        key = f"pur_{i}"  # 用索引作为key，避免商品名重复
+        product_groups[key] = {"purchases": [p], "sales": [], "pur_idx": i}
 
-    for p in purchases:
-        key = p["product"]
-        if key not in product_groups:
-            product_groups[key] = {"purchases": [], "sales": []}
-        product_groups[key]["purchases"].append(p)
-
+    # 为每个销售记录匹配最佳的购买记录
     for s in sales:
         best_group = None
         best_score = 0
-        for group_key in product_groups:
-            score = SequenceMatcher(None, s["product"], group_key).ratio()
-            if score > best_score and score > 0.3:
+        best_common_kw = set()
+        
+        for group_key, data in product_groups.items():
+            if not data["purchases"]:
+                continue
+            p = data["purchases"][0]
+            score, common_kw = calculate_match_score(s, p)
+            if score > best_score:
                 best_score = score
                 best_group = group_key
-
-        if best_group:
+                best_common_kw = common_kw
+        
+        # 阈值降低到0.15，因为商品名差异大
+        if best_group and best_score > 0.15:
             product_groups[best_group]["sales"].append(s)
+            if best_common_kw:
+                product_groups[best_group]["match_keywords"] = best_common_kw
         else:
-            product_groups[s["product"]] = {"purchases": [], "sales": [s]}
+            # 未匹配到的销售单独成组
+            new_key = f"sale_only_{len(product_groups)}"
+            product_groups[new_key] = {"purchases": [], "sales": [s], "pur_idx": -1}
 
+    # 构建关联数据
+    relations = []
     for group_key, data in product_groups.items():
-        if not data["purchases"] or not data["sales"]:
+        if not data["sales"]:
             continue
-
+        
         pur_qty = sum(p["qty"] for p in data["purchases"])
         sale_qty = sum(s["qty"] for s in data["sales"])
         stock = pur_qty - sale_qty
         pur_amount = sum(p["paid"] for p in data["purchases"])
         sale_amount = sum(s["revenue"] for s in data["sales"])
-        profit = sale_amount - (pur_amount * 20)
-
+        profit = sale_amount - (pur_amount * 20) if pur_amount > 0 else sale_amount
+        
+        # 商品名称：优先用购买记录的名称
+        if data["purchases"]:
+            product_name = data["purchases"][0]["product"]
+            spec = data["purchases"][0]["spec"]
+        else:
+            product_name = data["sales"][0]["product"]
+            spec = data["sales"][0].get("spec", "")
+        
+        # 匹配关键词备注
+        match_kw = data.get("match_keywords", set())
+        match_note = f"匹配关键词: {', '.join(match_kw)}" if match_kw else "未匹配购买记录"
+        
         for s in data["sales"]:
             relations.append({
-                "purchase_order": ", ".join(p["order"] for p in data["purchases"]),
+                "purchase_order": ", ".join(p["order"] for p in data["purchases"]) if data["purchases"] else "（无）",
                 "sale_order": s["order"],
-                "product": group_key,
-                "spec": data["purchases"][0]["spec"],
+                "product": product_name,
+                "spec": spec,
                 "pur_qty": pur_qty,
                 "sale_qty": sale_qty,
                 "stock": stock,
                 "pur_amount": pur_amount,
                 "sale_amount": sale_amount,
                 "profit": profit,
+                "match_note": match_note,
+                "pur_idx": data["pur_idx"],
             })
 
+    # 写入关联视图
     for i, rel in enumerate(relations):
         row = 3 + i
         ws.cell(row=row, column=1, value=i + 1)
-        ws.cell(row=row, column=2, value=rel["purchase_order"])
-        ws.cell(row=row, column=3, value=rel["sale_order"])
+        
+        # 进货订单号（带超链接）
+        pur_order_cell = ws.cell(row=row, column=2, value=rel["purchase_order"])
+        if rel["pur_idx"] >= 0 and purchase_row_map:
+            pur_row = 3 + rel["pur_idx"]  # 进货表数据从第3行开始
+            pur_order_cell.hyperlink = Hyperlink(
+                ref=f"B{row}",
+                location=f"'📥进货表'!A{pur_row}",
+                display=rel["purchase_order"]
+            )
+            pur_order_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
+        else:
+            pur_order_cell.font = FONT_NORMAL
+        pur_order_cell.alignment = ALIGN_CENTER
+        pur_order_cell.border = thin_border
+        
+        # 销售订单号（带超链接）
+        sale_order_cell = ws.cell(row=row, column=3, value=rel["sale_order"])
+        if sales_row_map:
+            sale_row = sales_row_map.get(rel["sale_order"])
+            if sale_row:
+                sale_order_cell.hyperlink = Hyperlink(
+                    ref=f"C{row}",
+                    location=f"'📤销售表'!A{sale_row}",
+                    display=rel["sale_order"]
+                )
+                sale_order_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
+            else:
+                sale_order_cell.font = FONT_NORMAL
+        else:
+            sale_order_cell.font = FONT_NORMAL
+        sale_order_cell.alignment = ALIGN_CENTER
+        sale_order_cell.border = thin_border
+        
         ws.cell(row=row, column=4, value=rel["product"])
         ws.cell(row=row, column=5, value=rel["spec"])
         ws.cell(row=row, column=6, value=rel["pur_qty"])
@@ -432,7 +536,8 @@ def create_relation_sheet(wb, purchases, sales):
         for col in range(1, len(RELATION_HEADERS) + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
-            c.font = FONT_NORMAL
+            if col not in (2, 3):  # 超链接单元格已设置字体
+                c.font = FONT_NORMAL
             c.alignment = ALIGN_CENTER if col in (1, 6, 7, 8, 9, 10, 11) else ALIGN_LEFT
         ws.cell(row=row, column=9).number_format = "¥#,##0.00"
         ws.cell(row=row, column=10).number_format = '"JPY" #,##0'
@@ -574,7 +679,14 @@ def main():
     create_purchase_sheet(wb, PURCHASE_DATA)
     create_sales_sheet(wb, SALES_DATA)
     create_inventory_sheet(wb, PURCHASE_DATA, SALES_DATA)
-    create_relation_sheet(wb, PURCHASE_DATA, SALES_DATA)
+    
+    # 构建行号映射（用于超链接）
+    # 进货表：第3行开始，每条记录占1行 -> {索引: 行号}
+    purchase_row_map = {i: 3 + i for i in range(len(PURCHASE_DATA))}
+    # 销售表：第3行开始，每条记录占1行 -> {订单号: 行号}
+    sales_row_map = {s["order"]: 3 + i for i, s in enumerate(SALES_DATA)}
+    
+    create_relation_sheet(wb, PURCHASE_DATA, SALES_DATA, purchase_row_map, sales_row_map)
 
     if "Sheet" in wb.sheetnames:
         idx = wb.sheetnames.index("Sheet")
