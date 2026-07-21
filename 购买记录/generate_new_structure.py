@@ -70,12 +70,10 @@ RELATION_HEADERS = ["序号", "进货订单号", "销售订单号", "商品名�
 
 def create_purchase_sheet(wb, records):
     if "📥进货表" in wb.sheetnames:
-        ws = wb["📥进货表"]
-        for row in range(1, 503):
-            for col in range(1, len(PURCHASE_HEADERS) + 1):
-                ws.cell(row=row, column=col).value = None
-    else:
-        ws = wb.create_sheet("📥进货表")
+        idx = wb.sheetnames.index("📥进货表")
+        old_ws = wb.worksheets[idx]
+        wb.remove(old_ws)
+    ws = wb.create_sheet("📥进货表")
 
     ws.merge_cells(f"A1:{chr(64 + len(PURCHASE_HEADERS))}1")
     title_cell = ws.cell(row=1, column=1, value=f"📥 进货表 ({YEAR}年)")
@@ -146,12 +144,10 @@ def create_purchase_sheet(wb, records):
 
 def create_sales_sheet(wb, records):
     if "📤销售表" in wb.sheetnames:
-        ws = wb["📤销售表"]
-        for row in range(1, 503):
-            for col in range(1, len(SALES_HEADERS) + 1):
-                ws.cell(row=row, column=col).value = None
-    else:
-        ws = wb.create_sheet("📤销售表")
+        idx = wb.sheetnames.index("📤销售表")
+        old_ws = wb.worksheets[idx]
+        wb.remove(old_ws)
+    ws = wb.create_sheet("📤销售表")
 
     last_col = chr(64 + len(SALES_HEADERS))
     ws.merge_cells(f"A1:{last_col}1")
@@ -231,12 +227,10 @@ def create_sales_sheet(wb, records):
 
 def create_inventory_sheet(wb, purchases, sales):
     if "📦库存表" in wb.sheetnames:
-        ws = wb["📦库存表"]
-        for row in range(1, 503):
-            for col in range(1, len(INVENTORY_HEADERS) + 1):
-                ws.cell(row=row, column=col).value = None
-    else:
-        ws = wb.create_sheet("📦库存表")
+        idx = wb.sheetnames.index("📦库存表")
+        old_ws = wb.worksheets[idx]
+        wb.remove(old_ws)
+    ws = wb.create_sheet("📦库存表")
 
     ws.merge_cells(f"A1:{chr(64 + len(INVENTORY_HEADERS))}1")
     title_cell = ws.cell(row=1, column=1, value=f"📦 库存表 ({YEAR}年)")
@@ -252,6 +246,8 @@ def create_inventory_sheet(wb, purchases, sales):
         cell.alignment = ALIGN_CENTER
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
+
+    from difflib import SequenceMatcher
 
     inventory = {}
     for p in purchases:
@@ -271,19 +267,21 @@ def create_inventory_sheet(wb, purchases, sales):
             inventory[key]["last_purchase"] = p["time"]
 
     for s in sales:
-        key = (s["product"], s["spec"])
-        if key not in inventory:
-            inventory[key] = {
-                "product": s["product"],
-                "spec": s["spec"],
-                "qty": 0,
-                "paid": 0,
-                "last_purchase": None,
-                "last_sale": s["order_date"],
-            }
-        inventory[key]["qty"] -= s["qty"]
-        if s["order_date"] > (inventory[key]["last_sale"] or datetime.min):
-            inventory[key]["last_sale"] = s["order_date"]
+        matched_key = None
+        best_score = 0
+        for p_key in inventory:
+            p_product, p_spec = p_key
+            score1 = SequenceMatcher(None, s["product"], p_product).ratio()
+            score2 = SequenceMatcher(None, s["spec"], p_spec).ratio() if s["spec"] and p_spec else 0
+            score = score1 * 0.7 + score2 * 0.3
+            if score > best_score and score > 0.3:
+                best_score = score
+                matched_key = p_key
+
+        if matched_key:
+            inventory[matched_key]["qty"] -= s["qty"]
+            if s["order_date"] > (inventory[matched_key]["last_sale"] or datetime.min):
+                inventory[matched_key]["last_sale"] = s["order_date"]
 
     items = sorted(inventory.values(), key=lambda x: x["qty"], reverse=True)
     for i, item in enumerate(items):
@@ -347,12 +345,10 @@ def create_inventory_sheet(wb, purchases, sales):
 
 def create_relation_sheet(wb, purchases, sales):
     if "🔗关联视图" in wb.sheetnames:
-        ws = wb["🔗关联视图"]
-        for row in range(1, 503):
-            for col in range(1, len(RELATION_HEADERS) + 1):
-                ws.cell(row=row, column=col).value = None
-    else:
-        ws = wb.create_sheet("🔗关联视图")
+        idx = wb.sheetnames.index("🔗关联视图")
+        old_ws = wb.worksheets[idx]
+        wb.remove(old_ws)
+    ws = wb.create_sheet("🔗关联视图")
 
     ws.merge_cells(f"A1:{chr(64 + len(RELATION_HEADERS))}1")
     title_cell = ws.cell(row=1, column=1, value=f"🔗 关联视图 ({YEAR}年)")
@@ -372,31 +368,45 @@ def create_relation_sheet(wb, purchases, sales):
     from difflib import SequenceMatcher
 
     relations = []
+    product_groups = {}
+
+    for p in purchases:
+        key = p["product"]
+        if key not in product_groups:
+            product_groups[key] = {"purchases": [], "sales": []}
+        product_groups[key]["purchases"].append(p)
+
     for s in sales:
-        best_purchase = None
+        best_group = None
         best_score = 0
-        for p in purchases:
-            score1 = SequenceMatcher(None, s["product"], p["product"]).ratio()
-            score2 = SequenceMatcher(None, s["spec"], p["spec"]).ratio() if s["spec"] and p["spec"] else 0
-            score = score1 * 0.6 + score2 * 0.4
+        for group_key in product_groups:
+            score = SequenceMatcher(None, s["product"], group_key).ratio()
             if score > best_score and score > 0.3:
                 best_score = score
-                best_purchase = p
+                best_group = group_key
 
-        if best_purchase:
-            key = (best_purchase["product"], best_purchase["spec"])
-            pur_qty = sum(p["qty"] for p in purchases if (p["product"], p["spec"]) == key)
-            sale_qty = sum(s2["qty"] for s2 in sales if SequenceMatcher(None, s2["product"], best_purchase["product"]).ratio() > 0.6)
-            stock = pur_qty - sale_qty
-            pur_amount = sum(p["paid"] for p in purchases if (p["product"], p["spec"]) == key)
-            sale_amount = sum(s2["revenue"] for s2 in sales if SequenceMatcher(None, s2["product"], best_purchase["product"]).ratio() > 0.6)
-            profit = sale_amount - (pur_amount * 20)
+        if best_group:
+            product_groups[best_group]["sales"].append(s)
+        else:
+            product_groups[s["product"]] = {"purchases": [], "sales": [s]}
 
+    for group_key, data in product_groups.items():
+        if not data["purchases"] or not data["sales"]:
+            continue
+
+        pur_qty = sum(p["qty"] for p in data["purchases"])
+        sale_qty = sum(s["qty"] for s in data["sales"])
+        stock = pur_qty - sale_qty
+        pur_amount = sum(p["paid"] for p in data["purchases"])
+        sale_amount = sum(s["revenue"] for s in data["sales"])
+        profit = sale_amount - (pur_amount * 20)
+
+        for s in data["sales"]:
             relations.append({
-                "purchase_order": best_purchase["order"],
+                "purchase_order": ", ".join(p["order"] for p in data["purchases"]),
                 "sale_order": s["order"],
-                "product": best_purchase["product"],
-                "spec": best_purchase["spec"],
+                "product": group_key,
+                "spec": data["purchases"][0]["spec"],
                 "pur_qty": pur_qty,
                 "sale_qty": sale_qty,
                 "stock": stock,
