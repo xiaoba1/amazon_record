@@ -586,6 +586,17 @@ def add_records(new_records, new_shipments=None):
         existing.append(rec)
         print(f"  + 新增购买: {rec['platform']} | {rec['time']} | {rec['product']} | ¥{rec['paid']}")
 
+    # 按订单号去重：新记录替换旧记录（保留最新的）
+    seen_orders = {}
+    deduplicated = []
+    for rec in existing:
+        if rec["order"] in seen_orders:
+            print(f"  ↻ 更新购买: {rec['platform']} | {rec['order']}")
+        seen_orders[rec["order"]] = rec
+    deduplicated = list(seen_orders.values())
+    deduplicated.sort(key=lambda x: x["time"])
+    print(f"  去重后: {len(deduplicated)} 条")
+
     # 先处理出货记录（包括新增），便于反向回填购买记录的"关联出货单"
     existing_shipments = []
     if "📦出货记录" in wb.sheetnames:
@@ -601,7 +612,7 @@ def add_records(new_records, new_shipments=None):
     # 反向回填：根据出货记录的 purchase_ref，把对应出货单号写到购买记录的 shipment 字段
     pur_to_ship = {s["purchase_ref"]: s["ship_order"] for s in existing_shipments if s.get("purchase_ref")}
     filled = 0
-    for rec in existing:
+    for rec in deduplicated:
         if not rec.get("shipment") and rec["order"] in pur_to_ship:
             rec["shipment"] = pur_to_ship[rec["order"]]
             filled += 1
@@ -610,12 +621,12 @@ def add_records(new_records, new_shipments=None):
 
     # 构建行号映射（用于超链接互跳）
     # 购买记录：第3行开始，每条记录占1行 -> {购买订单号: 行号}
-    purchase_row_map = {rec["order"]: 3 + i for i, rec in enumerate(existing)}
+    purchase_row_map = {rec["order"]: 3 + i for i, rec in enumerate(deduplicated)}
     # 出货记录：第3行开始，每条记录占1行 -> {出货单号: 行号}
     shipment_row_map = {s["ship_order"]: 3 + i for i, s in enumerate(existing_shipments)}
 
     # 重写购买记录明细（带出货单超链接）
-    rewrite_detail_sheet(ws_detail, existing, shipment_row_map)
+    rewrite_detail_sheet(ws_detail, deduplicated, shipment_row_map)
 
     # 重写出货记录（带购买记录超链接）
     if "📦出货记录" in wb.sheetnames:
@@ -626,12 +637,12 @@ def add_records(new_records, new_shipments=None):
         if cur_idx != desired_idx:
             wb.move_sheet("📦出货记录", offset=desired_idx - cur_idx)
 
-    rewrite_month_sheet(wb["📊月度统计"], existing)
-    rewrite_year_sheet(wb["📈年度统计"], existing)
-    rewrite_platform_sheet(wb["🏪平台分布"], existing)
+    rewrite_month_sheet(wb["📊月度统计"], deduplicated)
+    rewrite_year_sheet(wb["📈年度统计"], deduplicated)
+    rewrite_platform_sheet(wb["🏪平台分布"], deduplicated)
 
     wb.save(XLSX)
-    print(f"\n✅ 已保存，购买记录共 {len(existing)} 条")
+    print(f"\n✅ 已保存，购买记录共 {len(deduplicated)} 条")
     if "📦出货记录" in wb.sheetnames:
         print(f"   出货记录共 {len(existing_shipments)} 条")
 
@@ -774,19 +785,27 @@ if __name__ == "__main__":
     ws = wb["🛒购买记录明细"]
     existing = get_existing_records(ws)
     existing_orders = {r["order"] for r in existing}
-    new_purchases = [r for r in PURCHASE_RECORDS if r["order"] not in existing_orders]
+
+    new_purchases = []
+    updated_purchases = []
+    for r in PURCHASE_RECORDS:
+        if r["order"] not in existing_orders:
+            new_purchases.append(r)
+        else:
+            updated_purchases.append(r)
 
     ws_ship = wb["📦出货记录"]
     existing_shipments = get_existing_shipments(ws_ship)
     existing_ship_orders = {s["ship_order"] for s in existing_shipments}
     new_shipments = [s for s in SHIPMENT_RECORDS if s["ship_order"] not in existing_ship_orders]
 
-    if new_purchases or new_shipments:
+    if new_purchases or new_shipments or updated_purchases:
         print(f"新增购买记录: {len(new_purchases)} 条")
+        print(f"更新购买记录: {len(updated_purchases)} 条")
         print(f"新增出货记录: {len(new_shipments)} 条")
     else:
         print("无新增记录，仅重写表格")
 
-    add_records(new_purchases, new_shipments)
+    add_records(new_purchases + updated_purchases, new_shipments)
 
     git_commit_push()
