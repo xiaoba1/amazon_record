@@ -622,6 +622,16 @@ PURCHASE_DATA = [
         "order": "3314711712867008960",
         "remark": "原订单3313191614834136171退货后重新下单",
     },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 7, 27, 14, 39, 31),
+        "product": "多功能不锈钢压蒜器",
+        "spec": "按压式2个装 绿色",
+        "qty": 2,
+        "paid": 6.20,
+        "order": "3314150547079044970",
+        "remark": "",
+    },
 ]
 
 SALES_DATA = [
@@ -668,6 +678,21 @@ SALES_DATA = [
         "fee": 117,
         "revenue": 1005,
         "order": "249-4866874-7926210",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 7, 27),
+        "ship_date": datetime(2026, 7, 29),
+        "product": "切蒜器带透明收纳容器",
+        "spec": "绿色",
+        "sku": "ba0010",
+        "qty": 1,
+        "price": 699,
+        "tax": 64,
+        "fee": 169,
+        "revenue": 929,
+        "order": "250-31255524-9007023",
         "remark": "",
     },
 ]
