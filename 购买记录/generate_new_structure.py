@@ -310,25 +310,28 @@ def create_inventory_sheet(wb, purchases, sales):
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
 
-    # 使用与关联视图相同的匹配算法
+    # 使用与关联视图相同的匹配算法，按批次分配库存
     inventory = {}
     for i, p in enumerate(purchases):
         key = f"pur_{i}"
         inventory[key] = {
             "product": p["product"],
             "spec": p["spec"],
-            "qty": p["qty"],
+            "qty": p["qty"],  # 初始库存
+            "remaining": p["qty"],  # 剩余可分配库存
             "paid": p["paid"],
             "last_purchase": p["time"],
             "last_sale": None,
             "pur_idx": i,
         }
 
-    # 为每个销售记录匹配最佳的购买记录（复用关联视图的匹配逻辑）
+    # 为每个销售记录匹配最佳的购买记录（按剩余库存分配）
     for s in sales:
         best_key = None
         best_score = 0
         for key, item in inventory.items():
+            if item["remaining"] <= 0:
+                continue  # 跳过已无库存的批次
             score, _ = calculate_match_score(s, {
                 "product": item["product"],
                 "spec": item["spec"],
@@ -338,20 +341,42 @@ def create_inventory_sheet(wb, purchases, sales):
                 best_key = key
 
         if best_key and best_score > 0.08:
-            inventory[best_key]["qty"] -= s["qty"]
+            inventory[best_key]["qty"] -= s["qty"]  # 扣减库存
+            inventory[best_key]["remaining"] -= s["qty"]  # 扣减可分配库存
             if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
                 inventory[best_key]["last_sale"] = s["order_date"]
 
-    items = sorted(inventory.values(), key=lambda x: x["qty"], reverse=True)
+    # 按商品和规格汇总
+    summary = {}
+    for key, item in inventory.items():
+        sk = (item["product"], item["spec"])
+        if sk not in summary:
+            summary[sk] = {
+                "product": item["product"],
+                "spec": item["spec"],
+                "total_stock": 0,
+                "total_paid": 0,
+                "last_purchase": item["last_purchase"],
+                "last_sale": item["last_sale"],
+            }
+        summary[sk]["total_stock"] += item["qty"]
+        summary[sk]["total_paid"] += item["paid"]
+        if item["last_purchase"] > summary[sk]["last_purchase"]:
+            summary[sk]["last_purchase"] = item["last_purchase"]
+        if item["last_sale"] and item["last_sale"] > (summary[sk]["last_sale"] or datetime.min):
+            summary[sk]["last_sale"] = item["last_sale"]
+
+    items = sorted(summary.values(), key=lambda x: x["total_stock"], reverse=True)
     for i, item in enumerate(items):
         row = 3 + i
         ws.cell(row=row, column=1, value=i + 1)
         ws.cell(row=row, column=2, value=item["product"])
         ws.cell(row=row, column=3, value=item["spec"])
-        ws.cell(row=row, column=4, value=item["qty"])
+        ws.cell(row=row, column=4, value=item["total_stock"])
 
+        # 计算平均采购单价
         total_purchases = sum(p["qty"] for p in purchases if (p["product"], p["spec"]) == (item["product"], item["spec"]))
-        avg_price = round(item["paid"] / total_purchases, 2) if total_purchases > 0 else 0
+        avg_price = round(item["total_paid"] / total_purchases, 2) if total_purchases > 0 else 0
         ws.cell(row=row, column=5, value=avg_price)
 
         if item["last_purchase"]:
@@ -362,8 +387,8 @@ def create_inventory_sheet(wb, purchases, sales):
             ws.cell(row=row, column=7).number_format = "yyyy-mm-dd"
 
         stock_status = ""
-        if item["qty"] > 0:
-            stock_status = f"库存充足 ({item['qty']}个)"
+        if item["total_stock"] > 0:
+            stock_status = f"库存充足 ({item['total_stock']}个)"
         else:
             stock_status = "已售罄"
         ws.cell(row=row, column=8, value=stock_status)
@@ -384,7 +409,7 @@ def create_inventory_sheet(wb, purchases, sales):
         ws.cell(row=total_row, column=1).font = FONT_TOTAL
         ws.cell(row=total_row, column=1).fill = FILL_TOTAL
         ws.cell(row=total_row, column=1).alignment = ALIGN_CENTER
-        total_stock = sum(item["qty"] for item in items)
+        total_stock = sum(item["total_stock"] for item in items)
         ws.cell(row=total_row, column=4, value=total_stock)
         ws.cell(row=total_row, column=4).font = FONT_TOTAL
         ws.cell(row=total_row, column=4).fill = FILL_TOTAL
@@ -426,13 +451,18 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
 
     from openpyxl.worksheet.hyperlink import Hyperlink
 
-    # 构建商品组：以购买记录为基准
+    # 构建商品组：每个进货记录独立成组
     product_groups = {}
     for i, p in enumerate(purchases):
-        key = f"pur_{i}"  # 用索引作为key，避免商品名重复
-        product_groups[key] = {"purchases": [p], "sales": [], "pur_idx": i}
+        key = f"pur_{i}"
+        product_groups[key] = {
+            "purchases": [p], 
+            "sales": [], 
+            "pur_idx": i,
+            "remaining_stock": p["qty"]  # 可用库存
+        }
 
-    # 为每个销售记录匹配最佳的购买记录
+    # 为每个销售记录匹配最佳的购买记录（按剩余库存优先分配）
     for s in sales:
         best_group = None
         best_score = 0
@@ -443,7 +473,9 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
                 continue
             p = data["purchases"][0]
             score, common_kw = calculate_match_score(s, p)
-            if score > best_score:
+            
+            # 只有当该组还有库存时才考虑
+            if data["remaining_stock"] > 0 and score > best_score:
                 best_score = score
                 best_group = group_key
                 best_common_kw = common_kw
@@ -451,6 +483,7 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         # 阈值降低到0.08，因为商品名差异大
         if best_group and best_score > 0.08:
             product_groups[best_group]["sales"].append(s)
+            product_groups[best_group]["remaining_stock"] -= s["qty"]
             if best_common_kw:
                 product_groups[best_group]["match_keywords"] = best_common_kw
         else:
