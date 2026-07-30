@@ -516,21 +516,22 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         match_kw = data.get("match_keywords", set())
         match_note = f"匹配关键词: {', '.join(match_kw)}" if match_kw else "未匹配购买记录"
         
-        for s in data["sales"]:
-            relations.append({
-                "purchase_order": ", ".join(p["order"] for p in data["purchases"]) if data["purchases"] else "（无）",
-                "sale_order": s["order"],
-                "product": product_name,
-                "spec": spec,
-                "pur_qty": pur_qty,
-                "sale_qty": sale_qty,
-                "stock": stock,
-                "pur_amount": pur_amount,
-                "sale_amount": sale_amount,
-                "profit": profit,
-                "match_note": match_note,
-                "pur_idx": data["pur_idx"],
-            })
+        # 合并显示：同一批次的销售记录合并为一条
+        sale_orders = ", ".join(s["order"] for s in data["sales"]) if data["sales"] else "（无）"
+        relations.append({
+            "purchase_order": ", ".join(p["order"] for p in data["purchases"]) if data["purchases"] else "（无）",
+            "sale_order": sale_orders,
+            "product": product_name,
+            "spec": spec,
+            "pur_qty": pur_qty,
+            "sale_qty": sale_qty,
+            "stock": stock,
+            "pur_amount": pur_amount,
+            "sale_amount": sale_amount,
+            "profit": profit,
+            "match_note": match_note,
+            "pur_idx": data["pur_idx"],
+        })
 
     # 写入关联视图
     for i, rel in enumerate(relations):
