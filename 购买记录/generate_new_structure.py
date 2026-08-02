@@ -65,7 +65,7 @@ def auto_fit_columns(ws, headers, data_start_row=3, max_width=50, min_width=8):
 PURCHASE_HEADERS = ["序号", "进货平台", "下单时间", "商品名称", "规格", "购买数量", "实付金额(元)", "订单号", "单价", "备注"]
 SALES_HEADERS = ["序号", "销售平台", "订购日期", "发货日期", "商品名称", "规格", "SKU", "销售数量", "销售价(日元)", "税金(日元)", "手续费(日元)", "销售额(日元)", "订单号", "备注"]
 INVENTORY_HEADERS = ["序号", "商品名称", "规格", "当前库存", "采购单价(元)", "最近采购时间", "最近销售时间", "备注"]
-RELATION_HEADERS = ["序号", "进货订单号", "销售订单号", "商品名称", "规格", "销售数量", "采购金额(元)", "销售金额(日元)", "利润(日元)"]
+RELATION_HEADERS = ["序号", "进货订单号", "销售订单号", "商品名称", "规格", "销售数量", "采购金额(元)", "销售金额(日元)"]
 
 
 def extract_keywords(text):
@@ -578,17 +578,15 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         ws.cell(row=row, column=6, value=rel["sale_qty"])
         ws.cell(row=row, column=7, value=rel["pur_amount"])
         ws.cell(row=row, column=8, value=rel["sale_amount"])
-        ws.cell(row=row, column=9, value=rel["profit"])
 
         for col in range(1, len(RELATION_HEADERS) + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
             if col not in (2, 3):  # 超链接单元格已设置字体
                 c.font = FONT_NORMAL
-            c.alignment = ALIGN_CENTER if col in (1, 6, 7, 8, 9) else ALIGN_LEFT
+            c.alignment = ALIGN_CENTER if col in (1, 6, 7, 8) else ALIGN_LEFT
         ws.cell(row=row, column=7).number_format = "¥#,##0.00"
         ws.cell(row=row, column=8).number_format = '"JPY" #,##0'
-        ws.cell(row=row, column=9).number_format = '"JPY" #,##0'
         ws.row_dimensions[row].height = 22
 
     if relations:
@@ -613,12 +611,6 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         ws.cell(row=total_row, column=8).number_format = '"JPY" #,##0'
         ws.cell(row=total_row, column=8).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=8).border = thin_border
-        ws.cell(row=total_row, column=9, value=int(total_profit))
-        ws.cell(row=total_row, column=9).font = FONT_TOTAL
-        ws.cell(row=total_row, column=9).fill = FILL_TOTAL
-        ws.cell(row=total_row, column=9).number_format = '"JPY" #,##0'
-        ws.cell(row=total_row, column=9).alignment = ALIGN_CENTER
-        ws.cell(row=total_row, column=9).border = thin_border
         ws.row_dimensions[total_row].height = 28
 
     auto_fit_columns(ws, RELATION_HEADERS)
@@ -852,6 +844,21 @@ SALES_DATA = [
         "fee": 169,
         "revenue": 929,
         "order": "503-5593381-1019045",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 2),
+        "ship_date": datetime(2026, 8, 4),
+        "product": "切蒜器带透明收纳容器",
+        "spec": "绿色",
+        "sku": "ba0010",
+        "qty": 1,
+        "price": 699,
+        "tax": 64,
+        "fee": 169,
+        "revenue": 929,
+        "order": "249-4191194-8245444",
         "remark": "",
     },
 ]
