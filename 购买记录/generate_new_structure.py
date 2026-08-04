@@ -500,17 +500,10 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         pur_qty = sum(p["qty"] for p in data["purchases"])
         sale_qty = sum(s["qty"] for s in data["sales"])
         stock = pur_qty - sale_qty
-        pur_amount = sum(p["paid"] for p in data["purchases"])
+        pur_amount_total = sum(p["paid"] for p in data["purchases"])
         sale_amount = sum(s["revenue"] for s in data["sales"])
-        profit = sale_amount - (pur_amount * 20) if pur_amount > 0 else sale_amount
-        
-        # 商品名称：优先用购买记录的名称
-        if data["purchases"]:
-            product_name = data["purchases"][0]["product"]
-            spec = data["purchases"][0]["spec"]
-        else:
-            product_name = data["sales"][0]["product"]
-            spec = data["sales"][0].get("spec", "")
+        # 采购单价 = 实付总额 / 购买总数
+        unit_price = pur_amount_total / pur_qty if pur_qty > 0 else 0
         
         # 匹配关键词备注
         match_kw = data.get("match_keywords", set())
@@ -523,14 +516,13 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
             relations.append({
                 "purchase_order": ", ".join(p["order"] for p in data["purchases"]) if data["purchases"] else "（无）",
                 "sale_order": s["order"],
-                "product": product_name,
-                "spec": spec,
+                "product": s["product"],
+                "spec": s.get("spec", ""),
                 "pur_qty": pur_qty,
                 "sale_qty": s["qty"],
                 "stock": remaining_stock,  # 累计剩余库存
-                "pur_amount": pur_amount,
+                "pur_amount": round(unit_price * s["qty"], 2),
                 "sale_amount": s["revenue"],
-                "profit": s["revenue"] - (pur_amount * 20 / pur_qty) if pur_amount > 0 else s["revenue"],
                 "match_note": match_note,
                 "pur_idx": data["pur_idx"],
             })
@@ -598,7 +590,6 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         ws.cell(row=total_row, column=1).alignment = ALIGN_CENTER
         total_pur = sum(r["pur_amount"] for r in relations)
         total_sale = sum(r["sale_amount"] for r in relations)
-        total_profit = sum(r["profit"] for r in relations)
         ws.cell(row=total_row, column=7, value=round(total_pur, 2))
         ws.cell(row=total_row, column=7).font = FONT_TOTAL
         ws.cell(row=total_row, column=7).fill = FILL_TOTAL
