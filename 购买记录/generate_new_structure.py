@@ -669,6 +669,16 @@ PURCHASE_DATA = [
         "order": "3315760069697054152",
         "remark": "补货 10个装",
     },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 8, 10, 8, 3, 40),
+        "product": "KineShineX塑料除黄剂",
+        "spec": "100ml+毛巾",
+        "qty": 3,
+        "paid": 20.00,
+        "order": "3316792152573008960",
+        "remark": "",
+    },
 ]
 
 SALES_DATA = [
@@ -910,6 +920,21 @@ SALES_DATA = [
         "fee": 169,
         "revenue": 929,
         "order": "250-3154848-2935021",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 8),
+        "ship_date": datetime(2026, 8, 11),
+        "product": "塑料除黄剂 黄ばみ除去剤",
+        "spec": "100ml",
+        "sku": "asd159",
+        "qty": 1,
+        "price": 1468,
+        "tax": 134,
+        "fee": 194,
+        "revenue": 1673,
+        "order": "249-8279106-7397442",
         "remark": "",
     },
 ]
