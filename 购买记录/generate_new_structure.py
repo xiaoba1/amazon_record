@@ -317,7 +317,8 @@ def create_inventory_sheet(wb, purchases, sales):
         inventory[key] = {
             "product": p["product"],
             "spec": p["spec"],
-            "qty": p["qty"],  # 初始库存
+            "qty": p["qty"],  # 当前剩余库存
+            "initial_qty": p["qty"],  # 原始采购数量
             "remaining": p["qty"],  # 剩余可分配库存
             "paid": p["paid"],
             "last_purchase": p["time"],
@@ -346,27 +347,43 @@ def create_inventory_sheet(wb, purchases, sales):
             if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
                 inventory[best_key]["last_sale"] = s["order_date"]
 
-    # 按商品和规格汇总
-    summary = {}
+    # 按商品和规格汇总（使用模糊匹配合并同一商品的不同批次）
+    summary = []
     for key, item in inventory.items():
-        sk = (item["product"], item["spec"])
-        if sk not in summary:
-            summary[sk] = {
+        # 查找是否已有相似的商品分组
+        matched_idx = None
+        best_score = 0
+        for idx, s in enumerate(summary):
+            score, _ = calculate_match_score(
+                {"product": item["product"], "spec": item["spec"]},
+                {"product": s["product"], "spec": s["spec"]},
+            )
+            if score > best_score:
+                best_score = score
+                matched_idx = idx
+
+        # 相似度超过阈值则合并到同一组
+        if matched_idx is not None and best_score > 0.3:
+            s = summary[matched_idx]
+            s["total_stock"] += item["qty"]
+            s["total_paid"] += item["paid"]
+            s["total_purchase_qty"] += item["initial_qty"]
+            if item["last_purchase"] > s["last_purchase"]:
+                s["last_purchase"] = item["last_purchase"]
+            if item["last_sale"] and item["last_sale"] > (s["last_sale"] or datetime.min):
+                s["last_sale"] = item["last_sale"]
+        else:
+            summary.append({
                 "product": item["product"],
                 "spec": item["spec"],
-                "total_stock": 0,
-                "total_paid": 0,
+                "total_stock": item["qty"],
+                "total_paid": item["paid"],
+                "total_purchase_qty": item["initial_qty"],
                 "last_purchase": item["last_purchase"],
                 "last_sale": item["last_sale"],
-            }
-        summary[sk]["total_stock"] += item["qty"]
-        summary[sk]["total_paid"] += item["paid"]
-        if item["last_purchase"] > summary[sk]["last_purchase"]:
-            summary[sk]["last_purchase"] = item["last_purchase"]
-        if item["last_sale"] and item["last_sale"] > (summary[sk]["last_sale"] or datetime.min):
-            summary[sk]["last_sale"] = item["last_sale"]
+            })
 
-    items = sorted(summary.values(), key=lambda x: x["total_stock"], reverse=True)
+    items = sorted(summary, key=lambda x: x["total_stock"], reverse=True)
     for i, item in enumerate(items):
         row = 3 + i
         ws.cell(row=row, column=1, value=i + 1)
@@ -375,8 +392,7 @@ def create_inventory_sheet(wb, purchases, sales):
         ws.cell(row=row, column=4, value=item["total_stock"])
 
         # 计算平均采购单价
-        total_purchases = sum(p["qty"] for p in purchases if (p["product"], p["spec"]) == (item["product"], item["spec"]))
-        avg_price = round(item["total_paid"] / total_purchases, 2) if total_purchases > 0 else 0
+        avg_price = round(item["total_paid"] / item["total_purchase_qty"], 2) if item["total_purchase_qty"] > 0 else 0
         ws.cell(row=row, column=5, value=avg_price)
 
         if item["last_purchase"]:
