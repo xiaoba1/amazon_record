@@ -1023,6 +1023,21 @@ SALES_DATA = [
         "order": "250-5218699-2591031",
         "remark": "",
     },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 14),
+        "ship_date": datetime(2026, 8, 18),
+        "product": "切蒜器带透明收纳容器",
+        "spec": "绿色",
+        "sku": "ba0010",
+        "qty": 2,
+        "price": 1397,
+        "tax": 127,
+        "fee": 338,
+        "revenue": 1857,
+        "order": "250-8757664-8770260",
+        "remark": "",
+    },
 ]
 
 
