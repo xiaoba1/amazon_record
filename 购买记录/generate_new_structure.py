@@ -1038,6 +1038,21 @@ SALES_DATA = [
         "order": "250-8757664-8770260",
         "remark": "",
     },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 15),
+        "ship_date": datetime(2026, 8, 18),
+        "product": "玻璃修复膏 50g 车用",
+        "spec": "50g",
+        "sku": "1X-GB0W-BY30",
+        "qty": 1,
+        "price": 1122,
+        "tax": 102,
+        "fee": 117,
+        "revenue": 1005,
+        "order": "249-9105063-4908645",
+        "remark": "",
+    },
 ]
 
 
