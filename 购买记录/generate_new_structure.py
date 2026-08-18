@@ -866,7 +866,7 @@ LOSS_DATA = [
         "spec": "50g+海绵",
         "qty": 1,
         "loss_time": datetime(2026, 8, 17),
-        "purchase_order": "3314878984043005675",  # 遗失的旧批次
+        "purchase_order": "3314711712867008960",  # 遗失的旧批次
         "target_purchase_order": "3316979100148008960",  # 销售订单重关联到这个新批次
         "sale_order": "249-9105063-4908645",
         "reason": "库存遗失，无法发货",
