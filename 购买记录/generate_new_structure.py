@@ -695,7 +695,7 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
     ws.freeze_panes = "A3"
 
 
-def create_loss_sheet(wb, loss_records):
+def create_loss_sheet(wb, loss_records, purchase_row_map=None):
     """创建库存遗失表"""
     if "❌库存遗失表" in wb.sheetnames:
         idx = wb.sheetnames.index("❌库存遗失表")
@@ -719,6 +719,13 @@ def create_loss_sheet(wb, loss_records):
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
 
+    from openpyxl.worksheet.hyperlink import Hyperlink
+
+    pur_order_to_row = {}
+    if purchase_row_map:
+        for pur_idx, pur_row in purchase_row_map.items():
+            pur_order_to_row[PURCHASE_DATA[pur_idx]["order"]] = pur_row
+
     for i, rec in enumerate(loss_records):
         row = 3 + i
         ws.cell(row=row, column=1, value=i + 1)
@@ -728,14 +735,28 @@ def create_loss_sheet(wb, loss_records):
         if rec.get("loss_time"):
             ws.cell(row=row, column=5, value=rec["loss_time"])
             ws.cell(row=row, column=5).number_format = "yyyy-mm-dd"
-        ws.cell(row=row, column=6, value=rec.get("purchase_order", ""))
+
+        pur_order_val = rec.get("purchase_order", "")
+        pur_cell = ws.cell(row=row, column=6, value=pur_order_val)
+        if pur_order_val and pur_order_val in pur_order_to_row:
+            pur_row = pur_order_to_row[pur_order_val]
+            pur_cell.hyperlink = Hyperlink(
+                ref=f"F{row}",
+                location=f"'📥进货表'!A{pur_row}",
+                display=pur_order_val
+            )
+            pur_cell.font = Font(name="微软雅黑", size=10, color="0563C1", underline="single")
+        else:
+            pur_cell.font = FONT_NORMAL
+
         ws.cell(row=row, column=7, value=rec.get("reason", ""))
         ws.cell(row=row, column=8, value=rec.get("remark", ""))
 
         for col in range(1, len(LOSS_HEADERS) + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
-            c.font = FONT_NORMAL
+            if col != 6:
+                c.font = FONT_NORMAL
             c.alignment = ALIGN_CENTER if col in (1, 4, 5) else ALIGN_LEFT
         ws.cell(row=row, column=4).number_format = "0"
         ws.row_dimensions[row].height = 22
@@ -1257,12 +1278,11 @@ def main():
     create_purchase_sheet(wb, PURCHASE_DATA)
     create_sales_sheet(wb, SALES_DATA)
     create_inventory_sheet(wb, PURCHASE_DATA, SALES_DATA, LOSS_DATA)
-    create_loss_sheet(wb, LOSS_DATA)
-    
-    # 构建行号映射（用于超链接）
+
     purchase_row_map = {i: 3 + i for i in range(len(PURCHASE_DATA))}
     sales_row_map = {s["order"]: 3 + i for i, s in enumerate(SALES_DATA)}
-    
+
+    create_loss_sheet(wb, LOSS_DATA, purchase_row_map)
     create_relation_sheet(wb, PURCHASE_DATA, SALES_DATA, purchase_row_map, sales_row_map, LOSS_DATA)
 
     if "Sheet" in wb.sheetnames:
