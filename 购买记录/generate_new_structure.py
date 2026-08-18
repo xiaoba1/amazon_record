@@ -288,7 +288,7 @@ def create_sales_sheet(wb, records):
     ws.freeze_panes = "A3"
 
 
-def create_inventory_sheet(wb, purchases, sales):
+def create_inventory_sheet(wb, purchases, sales, loss_data=None):
     if "📦库存表" in wb.sheetnames:
         idx = wb.sheetnames.index("📦库存表")
         old_ws = wb.worksheets[idx]
@@ -309,6 +309,11 @@ def create_inventory_sheet(wb, purchases, sales):
         cell.alignment = ALIGN_CENTER
         cell.border = thin_border
     ws.row_dimensions[2].height = 28
+
+    # 构建订单号到批次索引的映射，用于遗失精确匹配
+    pur_order_to_keys = {}
+    for i, p in enumerate(purchases):
+        pur_order_to_keys.setdefault(p["order"], []).append(f"pur_{i}")
 
     # 使用与关联视图相同的匹配算法，按批次分配库存
     inventory = {}
@@ -346,6 +351,36 @@ def create_inventory_sheet(wb, purchases, sales):
             inventory[best_key]["remaining"] -= s["qty"]  # 扣减可分配库存
             if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
                 inventory[best_key]["last_sale"] = s["order_date"]
+
+    # 扣减库存遗失记录
+    if loss_data:
+        for loss in loss_data:
+            loss_qty = loss["qty"]
+            pur_order = loss.get("purchase_order", "")
+            target_keys = []
+            # 优先按采购订单号精确匹配批次
+            if pur_order and pur_order in pur_order_to_keys:
+                target_keys = pur_order_to_keys[pur_order]
+            # 否则按商品+规格模糊匹配
+            if not target_keys:
+                for key, item in inventory.items():
+                    score, _ = calculate_match_score(
+                        {"product": loss["product"], "spec": loss.get("spec", "")},
+                        {"product": item["product"], "spec": item["spec"]},
+                    )
+                    if score > 0.2 and item["remaining"] > 0:
+                        target_keys.append(key)
+
+            # 从匹配的批次中扣减遗失数量（优先扣减有剩余库存的批次）
+            remaining_loss = loss_qty
+            for key in sorted(target_keys, key=lambda k: -inventory[k]["remaining"]):
+                if remaining_loss <= 0:
+                    break
+                deduct = min(inventory[key]["remaining"], inventory[key]["qty"], remaining_loss)
+                if deduct > 0:
+                    inventory[key]["qty"] -= deduct
+                    inventory[key]["remaining"] -= deduct
+                    remaining_loss -= deduct
 
     # 按商品和规格汇总（使用模糊匹配合并同一商品的不同批次）
     summary = []
@@ -443,7 +478,7 @@ def create_inventory_sheet(wb, purchases, sales):
     ws.freeze_panes = "A3"
 
 
-def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row_map=None):
+def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row_map=None, loss_data=None):
     if "🔗关联视图" in wb.sheetnames:
         idx = wb.sheetnames.index("🔗关联视图")
         old_ws = wb.worksheets[idx]
@@ -467,13 +502,27 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
 
     from openpyxl.worksheet.hyperlink import Hyperlink
 
+    # 构建遗失销售订单 -> 目标采购订单号的映射（用于强制重关联）
+    loss_sale_redirect = {}
+    if loss_data:
+        for loss in loss_data:
+            sale_order = loss.get("sale_order", "")
+            target_pur_order = loss.get("target_purchase_order", "")
+            if sale_order:
+                loss_sale_redirect[sale_order] = target_pur_order
+
+    # 采购订单号 -> 批次key的映射
+    pur_order_to_key = {}
+    for i, p in enumerate(purchases):
+        pur_order_to_key[p["order"]] = f"pur_{i}"
+
     # 构建商品组：每个进货记录独立成组
     product_groups = {}
     for i, p in enumerate(purchases):
         key = f"pur_{i}"
         product_groups[key] = {
-            "purchases": [p], 
-            "sales": [], 
+            "purchases": [p],
+            "sales": [],
             "pur_idx": i,
             "remaining_stock": p["qty"]  # 可用库存
         }
@@ -483,25 +532,47 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
         best_group = None
         best_score = 0
         best_common_kw = set()
-        
-        for group_key, data in product_groups.items():
-            if not data["purchases"]:
-                continue
-            p = data["purchases"][0]
-            score, common_kw = calculate_match_score(s, p)
-            
-            # 只有当该组还有库存时才考虑
-            if data["remaining_stock"] > 0 and score > best_score:
-                best_score = score
-                best_group = group_key
-                best_common_kw = common_kw
-        
+
+        # 遗失销售订单：强制重定向到新采购订单（无指定则匹配最新相似商品批次）
+        if s["order"] in loss_sale_redirect:
+            target_order = loss_sale_redirect[s["order"]]
+            if target_order and target_order in pur_order_to_key:
+                best_group = pur_order_to_key[target_order]
+            else:
+                # 未指定目标采购单：匹配最晚（最新）的相似商品批次
+                latest_key = None
+                latest_time = datetime.min
+                for group_key, data in product_groups.items():
+                    if not data["purchases"]:
+                        continue
+                    p = data["purchases"][0]
+                    score, _ = calculate_match_score(s, p)
+                    if score > 0.2 and data["purchases"][0]["time"] > latest_time and data["remaining_stock"] > 0:
+                        latest_time = data["purchases"][0]["time"]
+                        latest_key = group_key
+                if latest_key:
+                    best_group = latest_key
+        else:
+            # 正常销售：按匹配度+库存分配
+            for group_key, data in product_groups.items():
+                if not data["purchases"]:
+                    continue
+                p = data["purchases"][0]
+                score, common_kw = calculate_match_score(s, p)
+
+                if data["remaining_stock"] > 0 and score > best_score:
+                    best_score = score
+                    best_group = group_key
+                    best_common_kw = common_kw
+
         # 阈值降低到0.08，因为商品名差异大
-        if best_group and best_score > 0.08:
+        if best_group and (s["order"] in loss_sale_redirect or best_score > 0.08):
             product_groups[best_group]["sales"].append(s)
             product_groups[best_group]["remaining_stock"] -= s["qty"]
             if best_common_kw:
                 product_groups[best_group]["match_keywords"] = best_common_kw
+            elif s["order"] in loss_sale_redirect:
+                product_groups[best_group]["match_keywords"] = set(["库存遗失重关联"])
         else:
             # 未匹配到的销售单独成组
             new_key = f"sale_only_{len(product_groups)}"
@@ -624,6 +695,77 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
     ws.freeze_panes = "A3"
 
 
+def create_loss_sheet(wb, loss_records):
+    """创建库存遗失表"""
+    if "❌库存遗失表" in wb.sheetnames:
+        idx = wb.sheetnames.index("❌库存遗失表")
+        old_ws = wb.worksheets[idx]
+        wb.remove(old_ws)
+    ws = wb.create_sheet("❌库存遗失表")
+
+    last_col = chr(64 + len(LOSS_HEADERS))
+    ws.merge_cells(f"A1:{last_col}1")
+    title_cell = ws.cell(row=1, column=1, value=f"❌ 库存遗失表 ({YEAR}年)")
+    title_cell.font = FONT_TITLE
+    title_cell.fill = FILL_TITLE
+    title_cell.alignment = ALIGN_CENTER
+    ws.row_dimensions[1].height = 32
+
+    for col_idx, h in enumerate(LOSS_HEADERS, 1):
+        cell = ws.cell(row=2, column=col_idx, value=h)
+        cell.font = FONT_HEADER
+        cell.fill = FILL_HEADER
+        cell.alignment = ALIGN_CENTER
+        cell.border = thin_border
+    ws.row_dimensions[2].height = 28
+
+    for i, rec in enumerate(loss_records):
+        row = 3 + i
+        ws.cell(row=row, column=1, value=i + 1)
+        ws.cell(row=row, column=2, value=rec["product"])
+        ws.cell(row=row, column=3, value=rec["spec"])
+        ws.cell(row=row, column=4, value=rec["qty"])
+        if rec.get("loss_time"):
+            ws.cell(row=row, column=5, value=rec["loss_time"])
+            ws.cell(row=row, column=5).number_format = "yyyy-mm-dd"
+        ws.cell(row=row, column=6, value=rec.get("purchase_order", ""))
+        ws.cell(row=row, column=7, value=rec.get("sale_order", ""))
+        ws.cell(row=row, column=8, value=rec.get("reason", ""))
+        ws.cell(row=row, column=9, value=rec.get("remark", ""))
+
+        for col in range(1, len(LOSS_HEADERS) + 1):
+            c = ws.cell(row=row, column=col)
+            c.border = thin_border
+            c.font = FONT_NORMAL
+            c.alignment = ALIGN_CENTER if col in (1, 4, 5) else ALIGN_LEFT
+        ws.cell(row=row, column=4).number_format = "0"
+        ws.row_dimensions[row].height = 22
+
+    if loss_records:
+        total_row = 3 + len(loss_records) + 1
+        ws.merge_cells(f"A{total_row}:C{total_row}")
+        ws.cell(row=total_row, column=1, value="📊 遗失合计")
+        ws.cell(row=total_row, column=1).font = FONT_TOTAL
+        ws.cell(row=total_row, column=1).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=1).alignment = ALIGN_CENTER
+        total_qty = sum(int(r["qty"] or 0) for r in loss_records)
+        ws.cell(row=total_row, column=4, value=total_qty)
+        ws.cell(row=total_row, column=4).font = FONT_TOTAL
+        ws.cell(row=total_row, column=4).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=4).alignment = ALIGN_CENTER
+        ws.cell(row=total_row, column=4).border = thin_border
+        ws.merge_cells(f"E{total_row}:{last_col}{total_row}")
+        ws.cell(row=total_row, column=5, value=f"{len(loss_records)} 笔遗失记录")
+        ws.cell(row=total_row, column=5).font = FONT_TOTAL
+        ws.cell(row=total_row, column=5).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=5).alignment = ALIGN_CENTER
+        ws.cell(row=total_row, column=5).border = thin_border
+        ws.row_dimensions[total_row].height = 28
+
+    auto_fit_columns(ws, LOSS_HEADERS)
+    ws.freeze_panes = "A3"
+
+
 PURCHASE_DATA = [
     {
         "platform": "1688",
@@ -704,6 +846,32 @@ PURCHASE_DATA = [
         "paid": 48.80,
         "order": "331637642022008960",
         "remark": "补货10个",
+    },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 8, 17, 21, 36, 40),
+        "product": "KineShineX玻璃修复膏",
+        "spec": "50g+海绵",
+        "qty": 3,
+        "paid": 18.50,
+        "order": "3316979100148008960",
+        "remark": "补货3个（旧批次库存遗失补货）",
+    },
+]
+
+# 库存遗失记录
+LOSS_HEADERS = ["序号", "商品名称", "规格", "遗失数量", "遗失时间", "关联采购订单号", "关联销售订单号", "遗失原因", "备注"]
+LOSS_DATA = [
+    {
+        "product": "KineShineX玻璃修复膏",
+        "spec": "50g+海绵",
+        "qty": 1,
+        "loss_time": datetime(2026, 8, 17),
+        "purchase_order": "3314878984043005675",  # 遗失的旧批次
+        "target_purchase_order": "3316979100148008960",  # 销售订单重关联到这个新批次
+        "sale_order": "249-9105063-4908645",
+        "reason": "库存遗失，无法发货",
+        "remark": "已重新采购3个（3316979100148008960），销售订单转关联新批次",
     },
 ]
 
@@ -1074,15 +1242,14 @@ def main():
 
     create_purchase_sheet(wb, PURCHASE_DATA)
     create_sales_sheet(wb, SALES_DATA)
-    create_inventory_sheet(wb, PURCHASE_DATA, SALES_DATA)
+    create_inventory_sheet(wb, PURCHASE_DATA, SALES_DATA, LOSS_DATA)
+    create_loss_sheet(wb, LOSS_DATA)
     
     # 构建行号映射（用于超链接）
-    # 进货表：第3行开始，每条记录占1行 -> {索引: 行号}
     purchase_row_map = {i: 3 + i for i in range(len(PURCHASE_DATA))}
-    # 销售表：第3行开始，每条记录占1行 -> {订单号: 行号}
     sales_row_map = {s["order"]: 3 + i for i, s in enumerate(SALES_DATA)}
     
-    create_relation_sheet(wb, PURCHASE_DATA, SALES_DATA, purchase_row_map, sales_row_map)
+    create_relation_sheet(wb, PURCHASE_DATA, SALES_DATA, purchase_row_map, sales_row_map, LOSS_DATA)
 
     if "Sheet" in wb.sheetnames:
         idx = wb.sheetnames.index("Sheet")
