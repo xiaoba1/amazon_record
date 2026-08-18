@@ -917,6 +917,16 @@ PURCHASE_DATA = [
     },
     {
         "platform": "1688",
+        "time": datetime(2026, 8, 18, 15, 48, 27),
+        "product": "KineShineX塑料除黄剂",
+        "spec": "100ml+毛巾",
+        "qty": 3,
+        "paid": 19.00,
+        "order": "3316370306219008960",
+        "remark": "缺货补货（订单250-3702632-4431839待发）",
+    },
+    {
+        "platform": "1688",
         "time": datetime(2026, 8, 17, 21, 36, 40),
         "product": "KineShineX玻璃修复膏",
         "spec": "50g+海绵",
