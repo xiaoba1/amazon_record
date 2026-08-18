@@ -316,6 +316,20 @@ def create_inventory_sheet(wb, purchases, sales, loss_data=None):
     for i, p in enumerate(purchases):
         pur_order_to_keys.setdefault(p["order"], []).append(f"pur_{i}")
 
+    # 采购订单号 -> 单个批次key的映射（用于遗失重关联）
+    pur_order_to_key = {}
+    for i, p in enumerate(purchases):
+        pur_order_to_key[p["order"]] = f"pur_{i}"
+
+    # 构建遗失销售订单 -> 目标采购订单号的映射（用于强制重关联）
+    loss_sale_redirect = {}
+    if loss_data:
+        for loss in loss_data:
+            sale_order = loss.get("sale_order", "")
+            target_pur_order = loss.get("target_purchase_order", "")
+            if sale_order:
+                loss_sale_redirect[sale_order] = target_pur_order
+
     # 使用与关联视图相同的匹配算法，按批次分配库存
     inventory = {}
     for i, p in enumerate(purchases):
@@ -334,6 +348,19 @@ def create_inventory_sheet(wb, purchases, sales, loss_data=None):
 
     # 为每个销售记录匹配最佳的购买记录（按剩余库存分配）
     for s in sales:
+        # 遗失销售订单：强制重定向到目标采购批次
+        if s["order"] in loss_sale_redirect:
+            target_order = loss_sale_redirect[s["order"]]
+            if target_order and target_order in pur_order_to_key:
+                best_key = pur_order_to_key[target_order]
+                if inventory[best_key]["remaining"] > 0:
+                    inventory[best_key]["qty"] -= s["qty"]
+                    inventory[best_key]["remaining"] -= s["qty"]
+                    if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
+                        inventory[best_key]["last_sale"] = s["order_date"]
+                    continue
+
+        # 正常匹配逻辑
         best_key = None
         best_score = 0
         for key, item in inventory.items():
