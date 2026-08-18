@@ -722,9 +722,13 @@ def create_loss_sheet(wb, loss_records, purchase_row_map=None):
     from openpyxl.worksheet.hyperlink import Hyperlink
 
     pur_order_to_row = {}
+    pur_order_to_unit_price = {}
     if purchase_row_map:
         for pur_idx, pur_row in purchase_row_map.items():
             pur_order_to_row[PURCHASE_DATA[pur_idx]["order"]] = pur_row
+            p = PURCHASE_DATA[pur_idx]
+            unit_price = round(p["paid"] / p["qty"], 2) if p["qty"] > 0 else 0
+            pur_order_to_unit_price[p["order"]] = unit_price
 
     for i, rec in enumerate(loss_records):
         row = 3 + i
@@ -732,16 +736,22 @@ def create_loss_sheet(wb, loss_records, purchase_row_map=None):
         ws.cell(row=row, column=2, value=rec["product"])
         ws.cell(row=row, column=3, value=rec["spec"])
         ws.cell(row=row, column=4, value=rec["qty"])
-        if rec.get("loss_time"):
-            ws.cell(row=row, column=5, value=rec["loss_time"])
-            ws.cell(row=row, column=5).number_format = "yyyy-mm-dd"
 
         pur_order_val = rec.get("purchase_order", "")
-        pur_cell = ws.cell(row=row, column=6, value=pur_order_val)
+        unit_price = pur_order_to_unit_price.get(pur_order_val, 0)
+        loss_cost = round(rec["qty"] * unit_price, 2)
+        ws.cell(row=row, column=5, value=loss_cost)
+        ws.cell(row=row, column=5).number_format = "¥#,##0.00"
+
+        if rec.get("loss_time"):
+            ws.cell(row=row, column=6, value=rec["loss_time"])
+            ws.cell(row=row, column=6).number_format = "yyyy-mm-dd"
+
+        pur_cell = ws.cell(row=row, column=7, value=pur_order_val)
         if pur_order_val and pur_order_val in pur_order_to_row:
             pur_row = pur_order_to_row[pur_order_val]
             pur_cell.hyperlink = Hyperlink(
-                ref=f"F{row}",
+                ref=f"G{row}",
                 location=f"'📥进货表'!A{pur_row}",
                 display=pur_order_val
             )
@@ -749,15 +759,15 @@ def create_loss_sheet(wb, loss_records, purchase_row_map=None):
         else:
             pur_cell.font = FONT_NORMAL
 
-        ws.cell(row=row, column=7, value=rec.get("reason", ""))
-        ws.cell(row=row, column=8, value=rec.get("remark", ""))
+        ws.cell(row=row, column=8, value=rec.get("reason", ""))
+        ws.cell(row=row, column=9, value=rec.get("remark", ""))
 
         for col in range(1, len(LOSS_HEADERS) + 1):
             c = ws.cell(row=row, column=col)
             c.border = thin_border
-            if col != 6:
+            if col != 7:
                 c.font = FONT_NORMAL
-            c.alignment = ALIGN_CENTER if col in (1, 4, 5) else ALIGN_LEFT
+            c.alignment = ALIGN_CENTER if col in (1, 4, 5, 6) else ALIGN_LEFT
         ws.cell(row=row, column=4).number_format = "0"
         ws.row_dimensions[row].height = 22
 
@@ -774,12 +784,22 @@ def create_loss_sheet(wb, loss_records, purchase_row_map=None):
         ws.cell(row=total_row, column=4).fill = FILL_TOTAL
         ws.cell(row=total_row, column=4).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=4).border = thin_border
-        ws.merge_cells(f"E{total_row}:{last_col}{total_row}")
-        ws.cell(row=total_row, column=5, value=f"{len(loss_records)} 笔遗失记录")
+        total_cost = sum(
+            round(r["qty"] * pur_order_to_unit_price.get(r.get("purchase_order", ""), 0), 2)
+            for r in loss_records
+        )
+        ws.cell(row=total_row, column=5, value=total_cost)
         ws.cell(row=total_row, column=5).font = FONT_TOTAL
         ws.cell(row=total_row, column=5).fill = FILL_TOTAL
         ws.cell(row=total_row, column=5).alignment = ALIGN_CENTER
         ws.cell(row=total_row, column=5).border = thin_border
+        ws.cell(row=total_row, column=5).number_format = "¥#,##0.00"
+        ws.merge_cells(f"F{total_row}:{last_col}{total_row}")
+        ws.cell(row=total_row, column=6, value=f"{len(loss_records)} 笔遗失记录")
+        ws.cell(row=total_row, column=6).font = FONT_TOTAL
+        ws.cell(row=total_row, column=6).fill = FILL_TOTAL
+        ws.cell(row=total_row, column=6).alignment = ALIGN_CENTER
+        ws.cell(row=total_row, column=6).border = thin_border
         ws.row_dimensions[total_row].height = 28
 
     auto_fit_columns(ws, LOSS_HEADERS)
@@ -880,7 +900,7 @@ PURCHASE_DATA = [
 ]
 
 # 库存遗失记录
-LOSS_HEADERS = ["序号", "商品名称", "规格", "遗失数量", "遗失时间", "关联采购订单号", "遗失原因", "备注"]
+LOSS_HEADERS = ["序号", "商品名称", "规格", "遗失数量", "遗失成本(元)", "遗失时间", "关联采购订单号", "遗失原因", "备注"]
 LOSS_DATA = [
     {
         "product": "KineShineX玻璃修复膏",
