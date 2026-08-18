@@ -1340,8 +1340,15 @@ def git_commit_push():
         subprocess.run(["git", "remote", "set-url", "origin", f"https://xiaoba1:{pat}@github.com/xiaoba1/amazon_record"], cwd=repo_dir, check=True)
     subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
     subprocess.run(["git", "commit", "-m", f"feat: 重构为新架构 进货表/销售表/库存表/关联视图 {datetime.now().strftime('%Y-%m-%d %H:%M')}"], cwd=repo_dir, check=True)
-    subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, check=True)
-    print("✅ git push 成功")
+    try:
+        result = subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ git push 成功")
+        else:
+            print(f"⚠️ git push 失败: {result.stderr.strip()}")
+            print("   请设置环境变量 GITHUB_PAT 后重试")
+    except Exception as e:
+        print(f"⚠️ git push 异常: {e}")
 
 
 if __name__ == "__main__":
