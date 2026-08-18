@@ -729,9 +729,8 @@ def create_loss_sheet(wb, loss_records):
             ws.cell(row=row, column=5, value=rec["loss_time"])
             ws.cell(row=row, column=5).number_format = "yyyy-mm-dd"
         ws.cell(row=row, column=6, value=rec.get("purchase_order", ""))
-        ws.cell(row=row, column=7, value=rec.get("sale_order", ""))
-        ws.cell(row=row, column=8, value=rec.get("reason", ""))
-        ws.cell(row=row, column=9, value=rec.get("remark", ""))
+        ws.cell(row=row, column=7, value=rec.get("reason", ""))
+        ws.cell(row=row, column=8, value=rec.get("remark", ""))
 
         for col in range(1, len(LOSS_HEADERS) + 1):
             c = ws.cell(row=row, column=col)
@@ -860,7 +859,7 @@ PURCHASE_DATA = [
 ]
 
 # 库存遗失记录
-LOSS_HEADERS = ["序号", "商品名称", "规格", "遗失数量", "遗失时间", "关联采购订单号", "关联销售订单号", "遗失原因", "备注"]
+LOSS_HEADERS = ["序号", "商品名称", "规格", "遗失数量", "遗失时间", "关联采购订单号", "遗失原因", "备注"]
 LOSS_DATA = [
     {
         "product": "KineShineX玻璃修复膏",
