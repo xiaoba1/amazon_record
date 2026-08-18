@@ -3,6 +3,7 @@
 四张表：进货表、销售表、库存表、关联视图
 """
 
+import os
 import subprocess
 from datetime import datetime
 from openpyxl import load_workbook
@@ -1276,11 +1277,25 @@ SALES_DATA = [
         "order": "249-2682748-9036611",
         "remark": "",
     },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 18),
+        "ship_date": datetime(2026, 8, 20),
+        "product": "塑料除黄剂 黄ばみ除去剤",
+        "spec": "100ml",
+        "sku": "asd159",
+        "qty": 1,
+        "price": 1468,
+        "tax": 134,
+        "fee": 194,
+        "revenue": 1673,
+        "order": "250-3702632-4431839",
+        "remark": "",
+    },
 ]
 
 
 def main():
-    import os
     os.makedirs("归档表格", exist_ok=True)
 
     wb = load_workbook(XLSX) if os.path.exists(XLSX) else None
@@ -1320,9 +1335,12 @@ def main():
 
 def git_commit_push():
     repo_dir = "/workspace"
+    pat = os.environ.get("GITHUB_PAT", "")
+    if pat:
+        subprocess.run(["git", "remote", "set-url", "origin", f"https://xiaoba1:{pat}@github.com/xiaoba1/amazon_record"], cwd=repo_dir, check=True)
     subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
     subprocess.run(["git", "commit", "-m", f"feat: 重构为新架构 进货表/销售表/库存表/关联视图 {datetime.now().strftime('%Y-%m-%d %H:%M')}"], cwd=repo_dir, check=True)
-    subprocess.run(["git", "push"], cwd=repo_dir, check=True)
+    subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, check=True)
     print("✅ git push 成功")
 
 
