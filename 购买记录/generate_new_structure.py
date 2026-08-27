@@ -973,6 +973,16 @@ PURCHASE_DATA = [
         "order": "3316801045105008960",
         "remark": "除黄剂补货3个",
     },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 8, 25, 0, 0, 0),
+        "product": "多功能清洁棉海绵吸水海绵",
+        "spec": "4個セット(黄色2+灰色2)",
+        "qty": 1,
+        "paid": 4.00,
+        "order": "3316818973003008960",
+        "remark": "4个套装(黄色2+灰色2) 按1个库存单位计算",
+    },
 ]
 
 # 库存遗失记录
@@ -1515,6 +1525,21 @@ SALES_DATA = [
         "fee": 169,
         "revenue": 929,
         "order": "249-4079338-6849421",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 25),
+        "ship_date": datetime(2026, 8, 27),
+        "product": "多功能清洁棉海绵吸水海绵",
+        "spec": "4個セット",
+        "sku": "HL-LUCS-000X",
+        "qty": 1,
+        "price": 1006,
+        "tax": 92,
+        "fee": 216,
+        "revenue": 1189,
+        "order": "503-1271944-7392630",
         "remark": "",
     },
 ]
