@@ -346,6 +346,36 @@ def create_inventory_sheet(wb, purchases, sales, loss_data=None):
             "pur_idx": i,
         }
 
+    # 先扣减库存遗失记录（确保销售匹配时使用正确的剩余库存）
+    if loss_data:
+        for loss in loss_data:
+            loss_qty = loss["qty"]
+            pur_order = loss.get("purchase_order", "")
+            target_keys = []
+            # 优先按采购订单号精确匹配批次
+            if pur_order and pur_order in pur_order_to_keys:
+                target_keys = pur_order_to_keys[pur_order]
+            # 否则按商品+规格模糊匹配
+            if not target_keys:
+                for key, item in inventory.items():
+                    score, _ = calculate_match_score(
+                        {"product": loss["product"], "spec": loss.get("spec", "")},
+                        {"product": item["product"], "spec": item["spec"]},
+                    )
+                    if score > 0.2 and item["remaining"] > 0:
+                        target_keys.append(key)
+
+            # 从匹配的批次中扣减遗失数量（优先扣减有剩余库存的批次）
+            remaining_loss = loss_qty
+            for key in sorted(target_keys, key=lambda k: -inventory[k]["remaining"]):
+                if remaining_loss <= 0:
+                    break
+                deduct = min(inventory[key]["remaining"], inventory[key]["qty"], remaining_loss)
+                if deduct > 0:
+                    inventory[key]["qty"] -= deduct
+                    inventory[key]["remaining"] -= deduct
+                    remaining_loss -= deduct
+
     # 为每个销售记录匹配最佳的购买记录（按剩余库存分配）
     for s in sales:
         # 遗失销售订单：强制重定向到目标采购批次
@@ -379,36 +409,6 @@ def create_inventory_sheet(wb, purchases, sales, loss_data=None):
             inventory[best_key]["remaining"] -= s["qty"]  # 扣减可分配库存
             if s["order_date"] > (inventory[best_key]["last_sale"] or datetime.min):
                 inventory[best_key]["last_sale"] = s["order_date"]
-
-    # 扣减库存遗失记录
-    if loss_data:
-        for loss in loss_data:
-            loss_qty = loss["qty"]
-            pur_order = loss.get("purchase_order", "")
-            target_keys = []
-            # 优先按采购订单号精确匹配批次
-            if pur_order and pur_order in pur_order_to_keys:
-                target_keys = pur_order_to_keys[pur_order]
-            # 否则按商品+规格模糊匹配
-            if not target_keys:
-                for key, item in inventory.items():
-                    score, _ = calculate_match_score(
-                        {"product": loss["product"], "spec": loss.get("spec", "")},
-                        {"product": item["product"], "spec": item["spec"]},
-                    )
-                    if score > 0.2 and item["remaining"] > 0:
-                        target_keys.append(key)
-
-            # 从匹配的批次中扣减遗失数量（优先扣减有剩余库存的批次）
-            remaining_loss = loss_qty
-            for key in sorted(target_keys, key=lambda k: -inventory[k]["remaining"]):
-                if remaining_loss <= 0:
-                    break
-                deduct = min(inventory[key]["remaining"], inventory[key]["qty"], remaining_loss)
-                if deduct > 0:
-                    inventory[key]["qty"] -= deduct
-                    inventory[key]["remaining"] -= deduct
-                    remaining_loss -= deduct
 
     # 按商品和规格汇总（使用模糊匹配合并同一商品的不同批次）
     summary = []
@@ -554,6 +554,34 @@ def create_relation_sheet(wb, purchases, sales, purchase_row_map=None, sales_row
             "pur_idx": i,
             "remaining_stock": p["qty"]  # 可用库存
         }
+
+    # 先扣减遗失数量，确保销售匹配使用正确的剩余库存
+    if loss_data:
+        for loss in loss_data:
+            loss_qty = loss["qty"]
+            pur_order = loss.get("purchase_order", "")
+            target_keys = []
+            if pur_order and pur_order in pur_order_to_key:
+                target_keys = [pur_order_to_key[pur_order]]
+            if not target_keys:
+                for group_key, data in product_groups.items():
+                    if not data["purchases"]:
+                        continue
+                    p = data["purchases"][0]
+                    score, _ = calculate_match_score(
+                        {"product": loss["product"], "spec": loss.get("spec", "")},
+                        p
+                    )
+                    if score > 0.2 and data["remaining_stock"] > 0:
+                        target_keys.append(group_key)
+            remaining_loss = loss_qty
+            for key in sorted(target_keys, key=lambda k: -product_groups[k]["remaining_stock"]):
+                if remaining_loss <= 0:
+                    break
+                deduct = min(product_groups[key]["remaining_stock"], remaining_loss)
+                if deduct > 0:
+                    product_groups[key]["remaining_stock"] -= deduct
+                    remaining_loss -= deduct
 
     # 为每个销售记录匹配最佳的购买记录（按剩余库存优先分配）
     for s in sales:
@@ -1442,6 +1470,51 @@ SALES_DATA = [
         "fee": 169,
         "revenue": 929,
         "order": "249-9065958-6465408",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 23),
+        "ship_date": datetime(2026, 8, 26),
+        "product": "玻璃修复膏 50g 车用",
+        "spec": "50g",
+        "sku": "1X-GB0W-BY30",
+        "qty": 1,
+        "price": 1122,
+        "tax": 102,
+        "fee": 117,
+        "revenue": 1005,
+        "order": "249-1251736-6693424",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 27),
+        "ship_date": datetime(2026, 8, 31),
+        "product": "切蒜器带透明收纳容器",
+        "spec": "绿色",
+        "sku": "ba0010",
+        "qty": 1,
+        "price": 699,
+        "tax": 64,
+        "fee": 169,
+        "revenue": 929,
+        "order": "503-3235803-0999839",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 8, 27),
+        "ship_date": datetime(2026, 8, 31),
+        "product": "切蒜器带透明收纳容器",
+        "spec": "绿色",
+        "sku": "ba0010",
+        "qty": 1,
+        "price": 699,
+        "tax": 64,
+        "fee": 169,
+        "revenue": 929,
+        "order": "249-4079338-6849421",
         "remark": "",
     },
 ]
