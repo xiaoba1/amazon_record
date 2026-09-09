@@ -1003,6 +1003,16 @@ PURCHASE_DATA = [
         "order": "3316385967122008960",
         "remark": "压蒜器补货10个",
     },
+    {
+        "platform": "1688",
+        "time": datetime(2026, 9, 9, 0, 0, 0),
+        "product": "韩伦美羽烟酰胺炫白牙膏",
+        "spec": "100g",
+        "qty": 1,
+        "paid": 3.00,
+        "order": "33168296295145353",
+        "remark": "新商品牙膏首单",
+    },
 ]
 
 # 库存遗失记录
@@ -1770,6 +1780,21 @@ SALES_DATA = [
         "fee": 194,
         "revenue": 1673,
         "order": "249-3540468-0515047",
+        "remark": "",
+    },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 9, 7),
+        "ship_date": datetime(2026, 9, 10),
+        "product": "韩伦美羽烟酰胺炫白牙膏",
+        "spec": "100g",
+        "sku": "PC-WS7Y-JVPR",
+        "qty": 1,
+        "price": 1480,
+        "tax": 135,
+        "fee": 124,
+        "revenue": 1356,
+        "order": "250-3137793-8739864",
         "remark": "",
     },
 ]
