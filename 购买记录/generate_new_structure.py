@@ -1982,6 +1982,21 @@ SALES_DATA = [
         "order": "249-0470172-4818202",
         "remark": "",
     },
+    {
+        "platform": "Amazon日本站",
+        "order_date": datetime(2026, 9, 29),
+        "ship_date": datetime(2026, 10, 1),
+        "product": "塑料除黄剂 黄ばみ除去剤",
+        "spec": "100ml",
+        "sku": "asd159",
+        "qty": 1,
+        "price": 1468,
+        "tax": 134,
+        "fee": 194,
+        "revenue": 1673,
+        "order": "503-8229948-4722203",
+        "remark": "",
+    },
 ]
 
 
